@@ -414,14 +414,13 @@ class NUISTPowerPlugin(Star):
 
     async def _poll_all_subscriptions(self):
         subs = await self.db.get_all_enabled_subscriptions()
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
         for sub in subs:
             try:
                 if sub.last_check_at:
-                    # SQLite loses timezone info on read; make aware if needed
                     last = sub.last_check_at
-                    if last.tzinfo is None:
-                        last = last.replace(tzinfo=timezone.utc)
+                    if last.tzinfo is not None:
+                        last = last.replace(tzinfo=None)
                     if (now - last).total_seconds() / 60 < sub.interval_minutes:
                         continue
                 account = await self.db.get_account_by_id(sub.account_id)

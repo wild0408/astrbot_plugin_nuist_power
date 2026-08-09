@@ -237,7 +237,7 @@ class DBManager:
             result = await session.execute(stmt)
             sub = result.scalar_one_or_none()
             if sub:
-                sub.last_check_at = datetime.now(timezone.utc)
+                sub.last_check_at = datetime.utcnow()
                 sub.last_balance = balance
                 await session.commit()
 

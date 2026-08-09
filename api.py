@@ -207,6 +207,25 @@ class NUISTPowerAPI:
             return None
 
     @staticmethod
+    def estimate_daily_consumption(records: list) -> dict:
+        """
+        Estimate daily power consumption from a list of balance records.
+        records should be sorted by time (oldest first).
+        Returns {"daily": float, "days_remaining": float, "enough_data": bool}.
+        """
+        if len(records) < 2:
+            return {"daily": 0, "days_remaining": 0, "enough_data": False}
+        first = records[0]
+        last = records[-1]
+        consumed = first.balance - last.balance
+        hours = (last.recorded_at - first.recorded_at).total_seconds() / 3600
+        if hours < 0.5 or consumed <= 0:
+            return {"daily": 0, "days_remaining": 0, "enough_data": False}
+        daily = (consumed / hours) * 24
+        days = last.balance / daily if daily > 0 else 999
+        return {"daily": round(daily, 2), "days_remaining": round(days, 1), "enough_data": True}
+
+    @staticmethod
     def token_remaining_hours(token: str) -> float:
         data = NUISTPowerAPI.decode_jwt(token)
         if not data:

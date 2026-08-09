@@ -6,10 +6,16 @@
     "hint": "新订阅默认多久检查一次电量"
   },
   "default_threshold": {
-    "description": "默认告警阈值 (度)",
+    "description": "默认普通告警阈值 (度)",
     "type": "float",
     "default": 10.0,
-    "hint": "电量低于此值时发送告警"
+    "hint": "电量低于此值时发送普通告警"
+  },
+  "default_critical_threshold": {
+    "description": "默认严重告警阈值 (度)",
+    "type": "float",
+    "default": 5.0,
+    "hint": "电量低于此值时发送严重告警"
   },
   "admin_alert_session": {
     "description": "管理员告警接收会话 ID (可选)",
@@ -18,7 +24,7 @@
   },
   "managed_accounts": {
     "type": "template_list",
-    "description": "管理员管理的账号 (可选，也可通过聊天命令绑定)。校区/楼栋/房间号会自动从学校 API 查询解析。",
+    "description": "管理员管理的账号 (可选)。校区/楼栋/房间号会自动从学校 API 查询解析。",
     "templates": {
       "account": {
         "name": "电费账号",
@@ -32,6 +38,11 @@
           "password": {
             "description": "密码",
             "type": "string"
+          },
+          "label": {
+            "description": "房间标签，如: 宿舍, 实验室",
+            "type": "string",
+            "default": "default"
           },
           "campus": {
             "description": "校区名，如 沁园, 晖园, 硕园, 文园",

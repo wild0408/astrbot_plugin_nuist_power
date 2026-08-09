@@ -1,0 +1,57 @@
+{
+  "default_interval": {
+    "description": "默认订阅检查间隔 (分钟)",
+    "type": "int",
+    "default": 60,
+    "hint": "新订阅默认多久检查一次电量"
+  },
+  "default_threshold": {
+    "description": "默认告警阈值 (度)",
+    "type": "float",
+    "default": 10.0,
+    "hint": "电量低于此值时发送告警"
+  },
+  "admin_alert_session": {
+    "description": "管理员告警接收会话 ID (可选)",
+    "type": "string",
+    "hint": "填写后所有低电量告警也会发送到此会话，留空则只发给订阅者"
+  },
+  "managed_accounts": {
+    "type": "template_list",
+    "description": "管理员管理的账号 (可选，也可通过聊天命令绑定)。校区/楼栋/房间号会自动从学校 API 查询解析。",
+    "templates": {
+      "account": {
+        "name": "电费账号",
+        "hint": "管理员统一管理的账号",
+        "display_item": "student_id",
+        "items": {
+          "student_id": {
+            "description": "学号",
+            "type": "string"
+          },
+          "password": {
+            "description": "密码",
+            "type": "string"
+          },
+          "campus": {
+            "description": "校区名，如 沁园, 晖园, 硕园, 文园",
+            "type": "string"
+          },
+          "building": {
+            "description": "楼栋名，如 沁园22栋, 沁园23栋",
+            "type": "string"
+          },
+          "room_number": {
+            "description": "房间号，如 214, 101",
+            "type": "string"
+          },
+          "user_id": {
+            "description": "绑定到的 AstrBot 用户标识 (留空则绑定到管理员)",
+            "type": "string",
+            "default": ""
+          }
+        }
+      }
+    }
+  }
+}

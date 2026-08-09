@@ -25,7 +25,7 @@ class PowerAccount(SQLModel, table=True):
     loudong_id: str = Field(max_length=64, default="15&沁园22栋")
     room_id: str = Field(max_length=64, nullable=False)
     token: Optional[str] = Field(default=None, max_length=2048)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.utcnow())
 
 
     def get_password(self) -> str:
@@ -65,7 +65,7 @@ class PowerRecord(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     account_id: int = Field(foreign_key="power_accounts.id", nullable=False, index=True)
     balance: float = Field(nullable=False)
-    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    recorded_at: datetime = Field(default_factory=lambda: datetime.utcnow())
 
 
 class DBManager:
@@ -76,7 +76,7 @@ class DBManager:
 
     async def init(self):
         async with self.engine.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
+            await conn.run_sync(lambda sync_conn: SQLModel.metadata.create_all(sync_conn, checkfirst=True))
         # Migrate: add new columns if missing
         async with self.engine.begin() as conn:
             await conn.run_sync(self._migrate)
@@ -245,7 +245,7 @@ class DBManager:
 
     async def add_record(self, account_id: int, balance: float):
         async with self.async_session() as session:
-            session.add(PowerRecord(account_id=account_id, balance=balance))
+            session.add(PowerRecord(account_id=account_id, balance=balance, recorded_at=datetime.utcnow()))
             await session.commit()
 
     async def get_records(self, account_id: int, limit: int = 10) -> List[PowerRecord]:

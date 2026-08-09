@@ -20,6 +20,7 @@ NUIST 电费查询插件 — AstrBot v4+
 """
 import asyncio
 import os
+import time
 from datetime import datetime, timezone
 
 from astrbot.api.event import filter, AstrMessageEvent
@@ -53,7 +54,7 @@ class NUISTPowerPlugin(Star):
         try:
             await self.db.init()
             await self._sync_managed_accounts()
-            self.logger.info("NUIST 电费插件初始化完成")
+            self.logger.info("NUIST 电费插件初始化完成 [BUILD 20260809-2300]")
         except Exception as e:
             self.logger.error(f"插件初始化失败: {e}")
             return
@@ -414,15 +415,8 @@ class NUISTPowerPlugin(Star):
 
     async def _poll_all_subscriptions(self):
         subs = await self.db.get_all_enabled_subscriptions()
-        now = datetime.utcnow()
         for sub in subs:
             try:
-                if sub.last_check_at:
-                    last = sub.last_check_at
-                    if last.tzinfo is not None:
-                        last = last.replace(tzinfo=None)
-                    if (now - last).total_seconds() / 60 < sub.interval_minutes:
-                        continue
                 account = await self.db.get_account_by_id(sub.account_id)
                 if not account:
                     continue
@@ -456,7 +450,7 @@ class NUISTPowerPlugin(Star):
                     if admin and admin != sub.session_id:
                         await self._send_to_session(admin, alert)
             except Exception as e:
-                self.logger.error(f"订阅 {sub.id} 检查失败: {e}")
+                self.logger.error(f"订阅 {sub.id} 检查失败: {e}", exc_info=True)
 
     async def _send_to_session(self, session_id: str, message: str):
         try:

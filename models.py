@@ -27,8 +27,6 @@ class PowerAccount(SQLModel, table=True):
     token: Optional[str] = Field(default=None, max_length=2048)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    def set_password(self, password: str):
-        self.password_b64 = base64.b64encode(password.encode("utf-8")).decode("utf-8")
 
     def get_password(self) -> str:
         return base64.b64decode(self.password_b64.encode("utf-8")).decode("utf-8")
@@ -148,13 +146,6 @@ class DBManager:
 
     # ---- Subscription ----
 
-    async def get_subscription(self, session_id: str) -> Optional[PowerSubscription]:
-        async with self.async_session() as session:
-            stmt = select(PowerSubscription).where(
-                PowerSubscription.session_id == session_id,
-                PowerSubscription.enabled == True)  # noqa: E712
-            result = await session.execute(stmt)
-            return result.scalar_one_or_none()
 
     async def get_subscription_by_account(self, account_id: int) -> Optional[PowerSubscription]:
         async with self.async_session() as session:

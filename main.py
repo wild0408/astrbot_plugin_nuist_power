@@ -74,16 +74,7 @@ class NUISTPowerPlugin(Star):
             acc = await self.db.get_account(uid)
             if acc and acc.token and acc.token_is_valid():
                 return acc.token
-        accounts = await self.db.get_all_accounts()
-        if not accounts:
-            raise RuntimeError("no_accounts")
-        for acc in accounts:
-            if acc.token and acc.token_is_valid():
-                return acc.token
-        acc = accounts[0]
-        token = await self.api.login(acc.student_id, acc.get_password())
-        await self.db.update_token(acc.user_id, token)
-        return token
+        raise RuntimeError("no_accounts")
 
     # ---- WebUI ----
 

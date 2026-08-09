@@ -177,11 +177,11 @@ class NUISTPowerAPI:
     def parse_balance(result: dict) -> float:
         show_data = result.get("map", {}).get("showData", {})
         for key, val in show_data.items():
-            try:
-                v = float(val)
-                return v
-            except (ValueError, TypeError):
-                continue
+            if "剩余" in key and "电量" in key:
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    pass
         return -1.0
 
     @staticmethod

@@ -77,6 +77,33 @@ class DBManager:
     async def init(self):
         async with self.engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
+        # Migrate: add new columns if missing
+        async with self.engine.begin() as conn:
+            await conn.run_sync(self._migrate)
+
+    @staticmethod
+    def _migrate(conn):
+        # Add critical_threshold column to power_subscriptions if missing
+        cur = conn.exec_driver_sql(
+            "PRAGMA table_info(power_subscriptions)"
+        )
+        cols = [row[1] for row in cur.fetchall()]
+        if "critical_threshold" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE power_subscriptions "
+                "ADD COLUMN critical_threshold FLOAT DEFAULT 5.0"
+            )
+        # Create power_records table if missing
+        conn.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS power_records ("
+            "  id INTEGER NOT NULL, "
+            "  account_id INTEGER NOT NULL, "
+            "  balance FLOAT NOT NULL, "
+            "  recorded_at DATETIME, "
+            "  PRIMARY KEY (id), "
+            "  FOREIGN KEY(account_id) REFERENCES power_accounts (id)"
+            ")"
+        )
 
     # ---- Account ----
 

@@ -6,6 +6,7 @@ campus/building/room resolution.
 import base64
 import json
 import time
+from datetime import timezone as _tz
 from typing import Optional, Tuple, List
 
 import httpx
@@ -218,7 +219,13 @@ class NUISTPowerAPI:
         first = records[0]
         last = records[-1]
         consumed = first.balance - last.balance
-        hours = (last.recorded_at - first.recorded_at).total_seconds() / 3600
+        t1 = first.recorded_at
+        t2 = last.recorded_at
+        if t1.tzinfo is None:
+            t1 = t1.replace(tzinfo=_tz.utc)
+        if t2.tzinfo is None:
+            t2 = t2.replace(tzinfo=_tz.utc)
+        hours = (t2 - t1).total_seconds() / 3600
         if hours < 0.5 or consumed <= 0:
             return {"daily": 0, "days_remaining": 0, "enough_data": False}
         daily = (consumed / hours) * 24

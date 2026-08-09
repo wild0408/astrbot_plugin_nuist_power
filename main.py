@@ -417,8 +417,13 @@ class NUISTPowerPlugin(Star):
         now = datetime.now(timezone.utc)
         for sub in subs:
             try:
-                if sub.last_check_at and (now - sub.last_check_at).total_seconds() / 60 < sub.interval_minutes:
-                    continue
+                if sub.last_check_at:
+                    # SQLite loses timezone info on read; make aware if needed
+                    last = sub.last_check_at
+                    if last.tzinfo is None:
+                        last = last.replace(tzinfo=timezone.utc)
+                    if (now - last).total_seconds() / 60 < sub.interval_minutes:
+                        continue
                 account = await self.db.get_account_by_id(sub.account_id)
                 if not account:
                     continue

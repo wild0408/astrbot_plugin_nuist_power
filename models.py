@@ -1,6 +1,5 @@
 """
 Database models for NUIST Power Query plugin.
-Uses SQLModel + async SQLAlchemy with aiosqlite.
 """
 import base64
 import json
@@ -22,14 +21,11 @@ class PowerAccount(SQLModel, table=True):
     user_id: str = Field(max_length=128, nullable=False, index=True)
     student_id: str = Field(max_length=32, nullable=False)
     password_b64: str = Field(max_length=256, nullable=False)
-    room_label: str = Field(max_length=32, default="default")
     xiaoqu_id: str = Field(max_length=64, default="3&沁园")
     loudong_id: str = Field(max_length=64, default="15&沁园22栋")
     room_id: str = Field(max_length=64, nullable=False)
     token: Optional[str] = Field(default=None, max_length=2048)
-    created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     def set_password(self, password: str):
         self.password_b64 = base64.b64encode(password.encode("utf-8")).decode("utf-8")
@@ -44,8 +40,7 @@ class PowerAccount(SQLModel, table=True):
             payload = self.token.split(".")[1]
             payload += "=" * (4 - len(payload) % 4)
             data = json.loads(base64.urlsafe_b64decode(payload))
-            exp = data.get("exp", 0)
-            return time.time() < exp
+            return time.time() < data.get("exp", 0)
         except Exception:
             return False
 
@@ -72,43 +67,30 @@ class PowerRecord(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     account_id: int = Field(foreign_key="power_accounts.id", nullable=False, index=True)
     balance: float = Field(nullable=False)
-    recorded_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class DBManager:
     def __init__(self, db_url: str):
         self.engine = create_async_engine(db_url, echo=False)
         self.async_session = sessionmaker(
-            self.engine, class_=AsyncSession, expire_on_commit=False
-        )
+            self.engine, class_=AsyncSession, expire_on_commit=False)
 
     async def init(self):
         async with self.engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
 
-    # ---- Account CRUD ----
+    # ---- Account ----
 
-    async def get_account(self, user_id: str, room_label: str = "default") -> Optional[PowerAccount]:
-        async with self.async_session() as session:
-            stmt = select(PowerAccount).where(
-                PowerAccount.user_id == user_id,
-                PowerAccount.room_label == room_label,
-            )
-            result = await session.execute(stmt)
-            return result.scalar_one_or_none()
-
-    async def get_accounts_by_user(self, user_id: str) -> List[PowerAccount]:
+    async def get_account(self, user_id: str) -> Optional[PowerAccount]:
         async with self.async_session() as session:
             stmt = select(PowerAccount).where(PowerAccount.user_id == user_id)
             result = await session.execute(stmt)
-            return list(result.scalars().all())
+            return result.scalar_one_or_none()
 
     async def get_all_accounts(self) -> List[PowerAccount]:
         async with self.async_session() as session:
-            stmt = select(PowerAccount)
-            result = await session.execute(stmt)
+            result = await session.execute(select(PowerAccount))
             return list(result.scalars().all())
 
     async def get_account_by_id(self, account_id: int) -> Optional[PowerAccount]:
@@ -118,82 +100,59 @@ class DBManager:
             return result.scalar_one_or_none()
 
     async def upsert_account(self, user_id: str, student_id: str, password: str,
-                             room_id: str, room_label: str = "default",
-                             xiaoqu_id: str = "3&沁园",
+                             room_id: str, xiaoqu_id: str = "3&沁园",
                              loudong_id: str = "15&沁园22栋") -> PowerAccount:
         async with self.async_session() as session:
-            stmt = select(PowerAccount).where(
-                PowerAccount.user_id == user_id,
-                PowerAccount.room_label == room_label,
-            )
+            stmt = select(PowerAccount).where(PowerAccount.user_id == user_id)
             result = await session.execute(stmt)
             account = result.scalar_one_or_none()
             if account:
                 account.student_id = student_id
-                account.password_b64 = base64.b64encode(
-                    password.encode("utf-8")).decode("utf-8")
+                account.password_b64 = base64.b64encode(password.encode("utf-8")).decode("utf-8")
                 account.room_id = room_id
                 account.xiaoqu_id = xiaoqu_id
                 account.loudong_id = loudong_id
             else:
                 account = PowerAccount(
                     user_id=user_id, student_id=student_id,
-                    password_b64=base64.b64encode(
-                        password.encode("utf-8")).decode("utf-8"),
-                    room_id=room_id, room_label=room_label,
-                    xiaoqu_id=xiaoqu_id, loudong_id=loudong_id,
-                )
+                    password_b64=base64.b64encode(password.encode("utf-8")).decode("utf-8"),
+                    room_id=room_id, xiaoqu_id=xiaoqu_id, loudong_id=loudong_id)
                 session.add(account)
             await session.commit()
             await session.refresh(account)
             return account
 
-    async def delete_account(self, user_id: str, room_label: str = "default") -> bool:
+    async def delete_account(self, user_id: str) -> bool:
         async with self.async_session() as session:
-            stmt = select(PowerAccount).where(
-                PowerAccount.user_id == user_id,
-                PowerAccount.room_label == room_label,
-            )
+            stmt = select(PowerAccount).where(PowerAccount.user_id == user_id)
             result = await session.execute(stmt)
             account = result.scalar_one_or_none()
             if not account:
                 return False
-            sub_stmt = select(PowerSubscription).where(
-                PowerSubscription.account_id == account.id
-            )
-            sub_result = await session.execute(sub_stmt)
-            for sub in sub_result.scalars().all():
-                await session.delete(sub)
-            rec_stmt = select(PowerRecord).where(
-                PowerRecord.account_id == account.id
-            )
-            rec_result = await session.execute(rec_stmt)
-            for rec in rec_result.scalars().all():
-                await session.delete(rec)
+            for stmt_cls in [PowerSubscription, PowerRecord]:
+                sub_stmt = select(stmt_cls).where(stmt_cls.account_id == account.id)
+                for rec in (await session.execute(sub_stmt)).scalars().all():
+                    await session.delete(rec)
             await session.delete(account)
             await session.commit()
             return True
 
-    async def update_token(self, user_id: str, room_label: str, token: str):
+    async def update_token(self, user_id: str, token: str):
         async with self.async_session() as session:
-            stmt = select(PowerAccount).where(
-                PowerAccount.user_id == user_id,
-                PowerAccount.room_label == room_label,
-            )
+            stmt = select(PowerAccount).where(PowerAccount.user_id == user_id)
             result = await session.execute(stmt)
             account = result.scalar_one_or_none()
             if account:
                 account.token = token
                 await session.commit()
 
-    # ---- Subscription CRUD ----
+    # ---- Subscription ----
 
     async def get_subscription(self, session_id: str) -> Optional[PowerSubscription]:
         async with self.async_session() as session:
             stmt = select(PowerSubscription).where(
                 PowerSubscription.session_id == session_id,
-                PowerSubscription.enabled == True,  # noqa: E712
-            )
+                PowerSubscription.enabled == True)  # noqa: E712
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
@@ -201,66 +160,51 @@ class DBManager:
         async with self.async_session() as session:
             stmt = select(PowerSubscription).where(
                 PowerSubscription.account_id == account_id,
-                PowerSubscription.enabled == True,  # noqa: E712
-            )
+                PowerSubscription.enabled == True)  # noqa: E712
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
     async def get_all_enabled_subscriptions(self) -> list:
         async with self.async_session() as session:
             stmt = select(PowerSubscription).where(
-                PowerSubscription.enabled == True  # noqa: E712
-            )
+                PowerSubscription.enabled == True)  # noqa: E712
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
     async def get_all_subscriptions(self) -> list:
         async with self.async_session() as session:
-            stmt = select(PowerSubscription)
-            result = await session.execute(stmt)
+            result = await session.execute(select(PowerSubscription))
             return list(result.scalars().all())
 
     async def upsert_subscription(self, session_id: str, account_id: int,
-                                  interval_minutes: int = 60,
-                                  threshold: float = 10.0,
+                                  interval_minutes: int = 60, threshold: float = 10.0,
                                   critical_threshold: float = 5.0) -> PowerSubscription:
         async with self.async_session() as session:
             stmt = select(PowerSubscription).where(
-                PowerSubscription.session_id == session_id,
-                PowerSubscription.account_id == account_id,
-            )
+                PowerSubscription.session_id == session_id)
             result = await session.execute(stmt)
             sub = result.scalar_one_or_none()
             if sub:
                 sub.interval_minutes = interval_minutes
                 sub.threshold = threshold
                 sub.critical_threshold = critical_threshold
+                sub.account_id = account_id
                 sub.enabled = True
             else:
                 sub = PowerSubscription(
                     session_id=session_id, account_id=account_id,
-                    interval_minutes=interval_minutes,
-                    threshold=threshold,
-                    critical_threshold=critical_threshold,
-                )
+                    interval_minutes=interval_minutes, threshold=threshold,
+                    critical_threshold=critical_threshold)
                 session.add(sub)
             await session.commit()
             await session.refresh(sub)
             return sub
 
-    async def disable_subscription(self, session_id: str, account_id: int = None) -> bool:
+    async def disable_subscription(self, session_id: str) -> bool:
         async with self.async_session() as session:
-            if account_id:
-                stmt = select(PowerSubscription).where(
-                    PowerSubscription.session_id == session_id,
-                    PowerSubscription.account_id == account_id,
-                    PowerSubscription.enabled == True,  # noqa: E712
-                )
-            else:
-                stmt = select(PowerSubscription).where(
-                    PowerSubscription.session_id == session_id,
-                    PowerSubscription.enabled == True,  # noqa: E712
-                )
+            stmt = select(PowerSubscription).where(
+                PowerSubscription.session_id == session_id,
+                PowerSubscription.enabled == True)  # noqa: E712
             result = await session.execute(stmt)
             sub = result.scalar_one_or_none()
             if not sub:
@@ -269,12 +213,9 @@ class DBManager:
             await session.commit()
             return True
 
-    async def update_subscription_check(self, subscription_id: int,
-                                        balance: float):
+    async def update_subscription_check(self, subscription_id: int, balance: float):
         async with self.async_session() as session:
-            stmt = select(PowerSubscription).where(
-                PowerSubscription.id == subscription_id
-            )
+            stmt = select(PowerSubscription).where(PowerSubscription.id == subscription_id)
             result = await session.execute(stmt)
             sub = result.scalar_one_or_none()
             if sub:
@@ -286,15 +227,12 @@ class DBManager:
 
     async def add_record(self, account_id: int, balance: float):
         async with self.async_session() as session:
-            rec = PowerRecord(account_id=account_id, balance=balance)
-            session.add(rec)
+            session.add(PowerRecord(account_id=account_id, balance=balance))
             await session.commit()
 
     async def get_records(self, account_id: int, limit: int = 10) -> List[PowerRecord]:
         async with self.async_session() as session:
-            stmt = (select(PowerRecord)
-                    .where(PowerRecord.account_id == account_id)
-                    .order_by(desc(PowerRecord.recorded_at))
-                    .limit(limit))
+            stmt = (select(PowerRecord).where(PowerRecord.account_id == account_id)
+                    .order_by(desc(PowerRecord.recorded_at)).limit(limit))
             result = await session.execute(stmt)
             return list(result.scalars().all())

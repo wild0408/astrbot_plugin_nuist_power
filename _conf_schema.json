@@ -2,25 +2,21 @@
   "default_interval": {
     "description": "默认订阅检查间隔 (分钟)",
     "type": "int",
-    "default": 60,
-    "hint": "新订阅默认多久检查一次电量"
+    "default": 60
   },
   "default_threshold": {
     "description": "默认普通告警阈值 (度)",
     "type": "float",
-    "default": 10.0,
-    "hint": "电量低于此值时发送普通告警"
+    "default": 10.0
   },
   "default_critical_threshold": {
     "description": "默认严重告警阈值 (度)",
     "type": "float",
-    "default": 5.0,
-    "hint": "电量低于此值时发送严重告警"
+    "default": 5.0
   },
   "admin_alert_session": {
     "description": "管理员告警接收会话 ID (可选)",
-    "type": "string",
-    "hint": "填写后所有低电量告警也会发送到此会话，留空则只发给订阅者"
+    "type": "string"
   },
   "managed_accounts": {
     "type": "template_list",
@@ -31,36 +27,12 @@
         "hint": "管理员统一管理的账号",
         "display_item": "student_id",
         "items": {
-          "student_id": {
-            "description": "学号",
-            "type": "string"
-          },
-          "password": {
-            "description": "密码",
-            "type": "string"
-          },
-          "label": {
-            "description": "房间标签，如: 宿舍, 实验室",
-            "type": "string",
-            "default": "default"
-          },
-          "campus": {
-            "description": "校区名，如 沁园, 晖园, 硕园, 文园",
-            "type": "string"
-          },
-          "building": {
-            "description": "楼栋名，如 沁园22栋, 沁园23栋",
-            "type": "string"
-          },
-          "room_number": {
-            "description": "房间号，如 214, 101",
-            "type": "string"
-          },
-          "user_id": {
-            "description": "绑定到的 AstrBot 用户标识 (留空则绑定到管理员)",
-            "type": "string",
-            "default": ""
-          }
+          "student_id": { "description": "学号", "type": "string" },
+          "password": { "description": "密码", "type": "string" },
+          "campus": { "description": "校区名，如 沁园, 晖园", "type": "string" },
+          "building": { "description": "楼栋名，如 沁园22栋", "type": "string" },
+          "room_number": { "description": "房间号，如 214", "type": "string" },
+          "user_id": { "description": "绑定到的用户标识 (留空=管理员)", "type": "string", "default": "" }
         }
       }
     }

@@ -3,20 +3,20 @@ astrbot_plugin_nuist_power
 NUIST 电费查询插件 — AstrBot v4+
 
 命令:
-  /power [标签]                       - 查询电量 (多房间时显示全部或指定标签)
-  /power bind <标签> <学号> <密码> <校区> <楼栋> <房间号>
-  /power bindraw <标签> <学号> <密码> <xiaoqu_id> <loudong_id> <room_id>
-  /power unbind [标签]                - 解绑 (不指定标签则列出可解绑项)
-  /power sub [标签] [分钟] [阈值] [严重阈值]
-  /power unsub [标签]
-  /power status                       - 查看所有绑定及订阅状态
-  /power history [标签]               - 查看余额历史
-  /power set <标签> <校区> <楼栋> <房间号>
-  /power setraw <标签> <xiaoqu_id> <loudong_id> <room_id>
-  /power campuses                     - 查看可选校区
-  /power buildings <校区>             - 查看校区内的楼栋
-  /power list                         - (管理) 查看所有账号与订阅
-  /power help
+  /power                    - 查询电量
+  /power bind <学号> <密码> <校区> <楼栋> <房间号>
+  /power bindraw <学号> <密码> <xiaoqu_id> <loudong_id> <room_id>
+  /power unbind             - 解绑
+  /power sub [分钟] [阈值] [严重阈值]
+  /power unsub              - 取消订阅
+  /power status             - 查看状态
+  /power history            - 余额历史 + 用量估算
+  /power set <校区> <楼栋> <房间号>
+  /power setraw <xiaoqu_id> <loudong_id> <room_id>
+  /power campuses           - 查看校区
+  /power buildings <校区>   - 查看楼栋
+  /power list               - 查看全部账号
+  /power help               - 帮助
 """
 import asyncio
 import os
@@ -28,7 +28,9 @@ from astrbot.api import logger
 from sqlalchemy import select
 
 from .api import NUISTPowerAPI
-from .models import DBManager, PowerAccount, PowerSubscription
+from .models import DBManager, PowerAccount
+
+FALLBACK_CAMPUSES = ["沁园", "晖园", "硕园", "文园", "人才公寓三期", "商铺"]
 
 
 def _uid(event: AstrMessageEvent) -> str:
@@ -41,16 +43,11 @@ class NUISTPowerPlugin(Star):
         super().__init__(context)
         self.config = config
         self.api = NUISTPowerAPI()
-
         plugin_dir = os.path.dirname(os.path.abspath(__file__))
         data_dir = os.path.join(plugin_dir, "data")
         os.makedirs(data_dir, exist_ok=True)
-        db_path = os.path.join(data_dir, "power.db")
-
-        self.db = DBManager(f"sqlite+aiosqlite:///{db_path}")
+        self.db = DBManager(f"sqlite+aiosqlite:///{os.path.join(data_dir, 'power.db')}")
         asyncio.create_task(self._init_and_poll())
-
-    # ---- 生命周期 ----
 
     async def _init_and_poll(self):
         try:
@@ -70,13 +67,30 @@ class NUISTPowerPlugin(Star):
     async def terminate(self):
         self.logger.info("NUIST 电费插件已卸载")
 
-    # ---- WebUI 账号同步 ----
+    # ---- Token helper ----
+
+    async def _get_any_token(self, uid: str = None) -> str:
+        if uid:
+            acc = await self.db.get_account(uid)
+            if acc and acc.token and acc.token_is_valid():
+                return acc.token
+        accounts = await self.db.get_all_accounts()
+        if not accounts:
+            raise RuntimeError("no_accounts")
+        for acc in accounts:
+            if acc.token and acc.token_is_valid():
+                return acc.token
+        acc = accounts[0]
+        token = await self.api.login(acc.student_id, acc.get_password())
+        await self.db.update_token(acc.user_id, token)
+        return token
+
+    # ---- WebUI ----
 
     async def _sync_managed_accounts(self):
         managed = self.config.get("managed_accounts", [])
         if not managed:
             return
-        resolver_token = None
         for entry in managed:
             if not isinstance(entry, dict):
                 continue
@@ -88,21 +102,17 @@ class NUISTPowerPlugin(Star):
             building = entry.get("building", "").strip()
             room_number = entry.get("room_number", "").strip()
             target_user = entry.get("user_id", "").strip() or "admin"
-            label = entry.get("label", "").strip() or "default"
             if not campus or not building or not room_number:
                 continue
             try:
-                if not resolver_token:
-                    resolver_token = await self.api.login(sid, pwd)
-                xq, ld, rm, err = await self.api.resolve_room(
-                    resolver_token, campus, building, room_number)
+                token = await self.api.login(sid, pwd)
+                xq, ld, rm, err = await self.api.resolve_room(token, campus, building, room_number)
                 if err:
                     self.logger.warning(f"WebUI {sid} 解析失败: {err}")
                     continue
-                await self.db.upsert_account(
-                    user_id=target_user, student_id=sid, password=pwd,
-                    room_id=rm, room_label=label, xiaoqu_id=xq, loudong_id=ld)
-                self.logger.info(f"WebUI 同步: {sid} -> {label}")
+                await self.db.upsert_account(target_user, sid, pwd, rm, xq, ld)
+                await self.db.update_token(target_user, token)
+                self.logger.info(f"WebUI 同步: {sid}")
             except Exception as e:
                 self.logger.error(f"WebUI {sid} 同步失败: {e}")
 
@@ -112,10 +122,8 @@ class NUISTPowerPlugin(Star):
     async def power_cmd(self, event: AstrMessageEvent):
         args = event.message_str.strip().split()
         if len(args) < 2:
-            result = await self._do_query(event)
-            yield event.plain_result(result)
+            yield event.plain_result(await self._do_query(event))
             return
-
         sub = args[1].lower()
         rest = args[2:]
 
@@ -135,53 +143,35 @@ class NUISTPowerPlugin(Star):
                 result = await handler(event, rest)
             else:
                 result = handler(event, rest)
-        elif sub == "query":
-            label = rest[0] if rest else None
-            result = await self._do_query(event, label)
         else:
-            # Try as a room label (e.g. /power 宿舍)
-            result = await self._do_query(event, sub)
+            result = f"未知子命令: {sub}\n\n{self._help_text()}"
         yield event.plain_result(result)
 
     # ---- Query ----
 
-    async def _do_query(self, event: AstrMessageEvent, label: str = None) -> str:
+    async def _do_query(self, event: AstrMessageEvent) -> str:
         uid = _uid(event)
-        if label:
-            account = await self.db.get_account(uid, label)
-            if not account:
-                return f"未找到标签为「{label}」的绑定\n使用 /power status 查看已绑定房间"
-            return await self._query_single(account)
-        else:
-            accounts = await self.db.get_accounts_by_user(uid)
-            if not accounts:
-                return ("你还没有绑定账号!\n"
-                        "使用 /power bind <标签> <学号> <密码> <校区> <楼栋> <房间号> 绑定\n"
-                        "例如: /power bind 宿舍 <学号> <密码> 沁园 沁园22栋 214")
-            if len(accounts) == 1:
-                return await self._query_single(accounts[0])
-            # Multiple rooms — query all
-            lines = ["⚡ 电费查询结果"]
-            for acc in accounts:
-                try:
-                    result = await self._query_single_raw(acc)
-                    lines.append(f"\n📌 [{acc.room_label}] {acc.loudong_id.split('&')[-1]} {acc.room_id.split('&')[-1]}")
-                    lines.append(f"   余额: {self.api.parse_balance(result)} 度")
-                except Exception as e:
-                    lines.append(f"\n📌 [{acc.room_label}] 查询失败: {e}")
-            return "\n".join(lines)
+        account = await self.db.get_account(uid)
+        if not account:
+            return (
+                "你还没有绑定账号!\n\n"
+                f"可选校区: {', '.join(FALLBACK_CAMPUSES)}\n"
+                "先用 /power campuses 查看校区，/power buildings <校区> 查看楼栋\n"
+                "然后: /power bind <学号> <密码> <校区> <楼栋> <房间号>\n"
+                "例如: /power bind <学号> <密码> 沁园 沁园22栋 214"
+            )
+        return await self._query_single(account)
 
     async def _query_single(self, account: PowerAccount) -> str:
         result = await self._query_single_raw(account)
         balance = self.api.parse_balance(result)
         await self.db.add_record(account.id, balance)
-
-        # Usage estimation
         records = await self.db.get_records(account.id, 10)
-        records.reverse()  # oldest first
+        records.reverse()
         est = self.api.estimate_daily_consumption(records)
-
-        label = f"{account.loudong_id} {account.room_id}"
+        bld = account.loudong_id.split("&")[-1]
+        rm = account.room_id.split("&")[-1]
+        label = f"{bld} {rm}号房"
         msg = self.api.format_result(result, label)
         if est["enough_data"]:
             msg += (f"\n📊 预计每日用电: {est['daily']} 度\n"
@@ -192,22 +182,25 @@ class NUISTPowerPlugin(Star):
         token = account.token
         if not token or not account.token_is_valid():
             token = await self.api.login(account.student_id, account.get_password())
-            await self.db.update_token(account.user_id, account.room_label, token)
+            await self.db.update_token(account.user_id, token)
         params = self.api.build_room_params(account.room_id, account.xiaoqu_id, account.loudong_id)
         result, new_token = await self.api.query_with_refresh(
             token, account.student_id, account.get_password(), params)
         if new_token:
-            await self.db.update_token(account.user_id, account.room_label, new_token)
+            await self.db.update_token(account.user_id, new_token)
         return result
 
     # ---- Bind ----
 
     async def _do_bind(self, event: AstrMessageEvent, args: list) -> str:
-        if len(args) < 6:
-            return ("用法: /power bind <标签> <学号> <密码> <校区> <楼栋> <房间号>\n"
-                    "例如: /power bind 宿舍 <学号> <密码> 沁园 沁园22栋 214\n"
-                    "标签用于区分多房间, 如: 宿舍, 实验室, 老家")
-        label, sid, pwd, campus, building, room = args[0], args[1], args[2], args[3], args[4], args[5]
+        if len(args) < 5:
+            return (
+                "用法: /power bind <学号> <密码> <校区> <楼栋> <房间号>\n\n"
+                f"可选校区: {', '.join(FALLBACK_CAMPUSES)}\n"
+                "先用 /power campuses 和 /power buildings <校区> 浏览\n\n"
+                "例如: /power bind <学号> <密码> 沁园 沁园22栋 214"
+            )
+        sid, pwd, campus, building, room = args[0], args[1], args[2], args[3], args[4]
         try:
             token = await self.api.login(sid, pwd)
         except Exception as e:
@@ -216,83 +209,48 @@ class NUISTPowerPlugin(Star):
         if err:
             return f"绑定失败: {err}"
         uid = _uid(event)
-        await self.db.upsert_account(uid, sid, pwd, rm, label, xq, ld)
-        await self.db.update_token(uid, label, token)
-        return (f"✅ 绑定成功! [{label}]\n"
-                f"  学号: {sid}\n  校区: {campus}\n  楼栋: {building}\n  房间: {room}\n\n"
-                f"使用 /power {label} 查询该房间电量")
-
-    # ---- Bindraw ----
+        await self.db.upsert_account(uid, sid, pwd, rm, xq, ld)
+        await self.db.update_token(uid, token)
+        return (f"✅ 绑定成功!\n  学号: {sid}\n  校区: {campus}\n"
+                f"  楼栋: {building}\n  房间: {room}\n\n使用 /power 查询电量")
 
     async def _do_bindraw(self, event: AstrMessageEvent, args: list) -> str:
-        if len(args) < 6:
-            return ("用法: /power bindraw <标签> <学号> <密码> <xiaoqu_id> <loudong_id> <room_id>\n"
-                    "例如: /power bindraw 宿舍 <学号> <密码> 3&沁园 15&沁园22栋 16072&214")
-        label, sid, pwd, xq, ld, rm = args[0], args[1], args[2], args[3], args[4], args[5]
+        if len(args) < 5:
+            return ("用法: /power bindraw <学号> <密码> <xiaoqu_id> <loudong_id> <room_id>\n"
+                    "例如: /power bindraw <学号> <密码> 3&沁园 15&沁园22栋 16072&214")
+        sid, pwd, xq, ld, rm = args[0], args[1], args[2], args[3], args[4]
         try:
             token = await self.api.login(sid, pwd)
         except Exception as e:
             return f"登录失败: {e}"
         uid = _uid(event)
-        await self.db.upsert_account(uid, sid, pwd, rm, label, xq, ld)
-        await self.db.update_token(uid, label, token)
-        return f"✅ 绑定成功! [{label}]  学号: {sid}\n使用 /power {label} 查询电量"
-
-    # ---- Unbind ----
+        await self.db.upsert_account(uid, sid, pwd, rm, xq, ld)
+        await self.db.update_token(uid, token)
+        return f"✅ 绑定成功! (原始ID)\n  学号: {sid}\n使用 /power 查询电量"
 
     async def _do_unbind(self, event: AstrMessageEvent, args: list) -> str:
-        uid = _uid(event)
-        if not args:
-            accounts = await self.db.get_accounts_by_user(uid)
-            if not accounts:
-                return "你还没有绑定账号"
-            labels = [a.room_label for a in accounts]
-            return ("请指定要解绑的标签:\n/power unbind " + "\n/power unbind ".join(labels))
-        label = args[0]
-        if await self.db.delete_account(uid, label):
-            return f"✅ 已解绑 [{label}]"
-        return f"未找到标签为「{label}」的绑定"
+        if await self.db.delete_account(_uid(event)):
+            return "✅ 已解绑账号"
+        return "你还没有绑定账号"
 
     # ---- Sub ----
 
     async def _do_sub(self, event: AstrMessageEvent, args: list) -> str:
         uid = _uid(event)
-        label = args[0] if args and not args[0].isdigit() else "default"
-        rest = args[1:] if (args and not args[0].isdigit()) else args
-
-        account = await self.db.get_account(uid, label)
+        account = await self.db.get_account(uid)
         if not account:
-            return f"未找到标签为「{label}」的绑定\n使用 /power status 查看已绑定房间"
-
-        interval = int(rest[0]) if rest and rest[0].isdigit() else self.config.get("default_interval", 60)
-        threshold = float(rest[1]) if len(rest) >= 2 else self.config.get("default_threshold", 10.0)
-        critical = float(rest[2]) if len(rest) >= 3 else self.config.get("default_critical_threshold", 5.0)
-
+            return "请先绑定账号: /power bind <学号> <密码> <校区> <楼栋> <房间号>"
+        interval = int(args[0]) if args and args[0].isdigit() else self.config.get("default_interval", 60)
+        threshold = float(args[1]) if len(args) >= 2 else self.config.get("default_threshold", 10.0)
+        critical = float(args[2]) if len(args) >= 3 else self.config.get("default_critical_threshold", 5.0)
         await self.db.upsert_subscription(
-            session_id=event.unified_msg_origin,
-            account_id=account.id,
-            interval_minutes=interval,
-            threshold=threshold,
-            critical_threshold=critical,
-        )
-        return (f"✅ 订阅已开启 [{label}]\n"
-                f"  检查间隔: {interval} 分钟\n"
-                f"  普通告警: 低于 {threshold} 度\n"
-                f"  严重告警: 低于 {critical} 度 (提高告警频率)")
-
-    # ---- Unsub ----
+            session_id=event.unified_msg_origin, account_id=account.id,
+            interval_minutes=interval, threshold=threshold, critical_threshold=critical)
+        return (f"✅ 订阅已开启\n  检查间隔: {interval} 分钟\n"
+                f"  普通告警: 低于 {threshold} 度\n  严重告警: 低于 {critical} 度")
 
     async def _do_unsub(self, event: AstrMessageEvent, args: list) -> str:
-        label = args[0] if args else None
-        uid = _uid(event)
-        if label:
-            account = await self.db.get_account(uid, label)
-            if not account:
-                return f"未找到标签为「{label}」的绑定"
-            account_id = account.id
-        else:
-            account_id = None
-        if await self.db.disable_subscription(event.unified_msg_origin, account_id):
+        if await self.db.disable_subscription(event.unified_msg_origin):
             return "✅ 已取消订阅"
         return "当前没有活跃的订阅"
 
@@ -300,58 +258,42 @@ class NUISTPowerPlugin(Star):
 
     async def _do_status(self, event: AstrMessageEvent) -> str:
         uid = _uid(event)
-        accounts = await self.db.get_accounts_by_user(uid)
-        if not accounts:
+        account = await self.db.get_account(uid)
+        if not account:
             return "你还没有绑定账号\n使用 /power bind 绑定"
-
-        lines = ["📊 账号状态"]
-        for acc in accounts:
-            bld = acc.loudong_id.split("&")[-1]
-            rm = acc.room_id.split("&")[-1]
-            lines.append(f"\n  📌 [{acc.room_label}] {acc.student_id}")
-            lines.append(f"     {bld} {rm}号房")
-            if acc.token:
-                h = self.api.token_remaining_hours(acc.token)
-                lines.append(f"     Token: {'有效' if h > 0 else '已过期'} ({h:.0f}h)")
-            else:
-                lines.append(f"     Token: 未缓存")
-
-            sub = await self.db.get_subscription_by_account(acc.id)
-            if sub:
-                lines.append(f"     📬 订阅: 每{sub.interval_minutes}分钟, "
-                             f"告警<{sub.threshold}度, 严重<{sub.critical_threshold}度")
-            else:
-                lines.append(f"     📬 未订阅")
-
-        lines.append(f"\n共 {len(accounts)} 个绑定\n"
-                      "使用 /power history [标签] 查看历史")
+        bld = account.loudong_id.split("&")[-1]
+        rm = account.room_id.split("&")[-1]
+        lines = ["📊 账号状态", f"  学号: {account.student_id}",
+                 f"  房间: {bld} {rm}号房"]
+        if account.token:
+            h = self.api.token_remaining_hours(account.token)
+            lines.append(f"  Token: {'有效' if h > 0 else '已过期'} ({h:.0f}h)")
+        else:
+            lines.append("  Token: 未缓存")
+        sub = await self.db.get_subscription_by_account(account.id)
+        if sub:
+            lines.append(f"  📬 订阅: 每{sub.interval_minutes}分钟, "
+                         f"告警<{sub.threshold}度, 严重<{sub.critical_threshold}度")
+        else:
+            lines.append("  📬 未订阅 (使用 /power sub 开启)")
         return "\n".join(lines)
 
     # ---- History ----
 
     async def _do_history(self, event: AstrMessageEvent, args: list) -> str:
         uid = _uid(event)
-        label = args[0] if args else "default"
-        account = await self.db.get_account(uid, label)
+        account = await self.db.get_account(uid)
         if not account:
-            accounts = await self.db.get_accounts_by_user(uid)
-            if not accounts:
-                return "你还没有绑定账号"
-            # Try to use first account
-            account = accounts[0]
-            label = account.room_label
-
+            return "你还没有绑定账号"
         records = await self.db.get_records(account.id, 10)
         if not records:
-            return f"[{label}] 暂无历史记录\n使用 /power {label} 查询一次后开始记录"
-
+            return "暂无历史记录\n使用 /power 查询一次后开始记录"
         bld = account.loudong_id.split("&")[-1]
         rm = account.room_id.split("&")[-1]
-        lines = [f"📈 余额历史 [{label}] — {bld} {rm}号房", "-" * 28]
+        lines = [f"📈 余额历史 — {bld} {rm}号房", "-" * 28]
         for rec in reversed(records):
             t = rec.recorded_at.strftime("%m/%d %H:%M") if rec.recorded_at else "?"
             lines.append(f"  {t}  |  {rec.balance} 度")
-
         if len(records) >= 2:
             est = self.api.estimate_daily_consumption(list(reversed(records)))
             if est["enough_data"]:
@@ -363,14 +305,14 @@ class NUISTPowerPlugin(Star):
     # ---- Set ----
 
     async def _do_set(self, event: AstrMessageEvent, args: list) -> str:
-        if len(args) < 4:
-            return ("用法: /power set <标签> <校区名> <楼栋名> <房间号>\n"
-                    "例如: /power set 宿舍 沁园 沁园23栋 301")
-        label, campus, building, room = args[0], args[1], args[2], args[3]
+        if len(args) < 3:
+            return ("用法: /power set <校区名> <楼栋名> <房间号>\n"
+                    f"可选校区: {', '.join(FALLBACK_CAMPUSES)}\n例如: /power set 沁园 沁园23栋 301")
+        campus, building, room = args[0], args[1], args[2]
         uid = _uid(event)
-        account = await self.db.get_account(uid, label)
+        account = await self.db.get_account(uid)
         if not account:
-            return f"未找到标签为「{label}」的绑定"
+            return "请先绑定账号"
         token = account.token
         if not token or not account.token_is_valid():
             try:
@@ -382,96 +324,75 @@ class NUISTPowerPlugin(Star):
             return f"修改失败: {err}"
         async with self.db.async_session() as session:
             stmt = select(PowerAccount).where(PowerAccount.id == account.id)
-            result = await session.execute(stmt)
-            acc = result.scalar_one_or_none()
+            acc = (await session.execute(stmt)).scalar_one_or_none()
             if acc:
                 acc.xiaoqu_id = xq; acc.loudong_id = ld; acc.room_id = rm
                 await session.commit()
-        return f"✅ [{label}] 已更新: {campus} {building} {room}"
-
-    # ---- Setraw ----
+        return f"✅ 房间已更新: {campus} {building} {room}"
 
     async def _do_setraw(self, event: AstrMessageEvent, args: list) -> str:
-        if len(args) < 4:
-            return "用法: /power setraw <标签> <xiaoqu_id> <loudong_id> <room_id>"
-        label, xq, ld, rm = args[0], args[1], args[2], args[3]
+        if len(args) < 3:
+            return "用法: /power setraw <xiaoqu_id> <loudong_id> <room_id>\n例如: /power setraw 3&沁园 15&沁园22栋 16072&214"
+        xq, ld, rm = args[0], args[1], args[2]
         uid = _uid(event)
-        account = await self.db.get_account(uid, label)
+        account = await self.db.get_account(uid)
         if not account:
-            return f"未找到标签为「{label}」的绑定"
+            return "请先绑定账号"
         async with self.db.async_session() as session:
             stmt = select(PowerAccount).where(PowerAccount.id == account.id)
-            result = await session.execute(stmt)
-            acc = result.scalar_one_or_none()
+            acc = (await session.execute(stmt)).scalar_one_or_none()
             if acc:
                 acc.xiaoqu_id = xq; acc.loudong_id = ld; acc.room_id = rm
                 await session.commit()
-        return f"✅ [{label}] 已更新 (原始ID)"
+        return f"✅ 房间已更新 (原始ID)"
 
     # ---- Campuses ----
 
     async def _do_campuses(self, event: AstrMessageEvent, args: list) -> str:
-        uid = _uid(event)
-        account = await self.db.get_account(uid)
-        if not account:
-            account = (await self.db.get_all_accounts() or [None])[0]
-        if not account:
-            return "请先绑定一个账号 (用于获取 Token)，然后才能查询校区列表"
-        token = account.token
-        if not token or not account.token_is_valid():
-            try:
-                token = await self.api.login(account.student_id, account.get_password())
-            except Exception as e:
-                return f"登录失败: {e}"
         try:
+            token = await self._get_any_token(_uid(event))
             campuses = await self.api.get_campuses(token)
-        except Exception as e:
-            return f"获取校区列表失败: {e}"
-        lines = ["🏫 可选校区:"]
-        for c in campuses:
-            lines.append(f"  {c['name']}")
-        lines.append(f"\n共 {len(campuses)} 个校区\n使用 /power buildings <校区名> 查看楼栋")
-        return "\n".join(lines)
-
-    # ---- Buildings ----
+            lines = ["🏫 可选校区 (实时):"]
+            for c in campuses:
+                lines.append(f"  {c['name']}")
+            lines.append(f"\n共 {len(campuses)} 个校区")
+            return "\n".join(lines)
+        except RuntimeError as e:
+            if str(e) == "no_accounts":
+                lines = ["🏫 可选校区 (离线, 绑定后可获取实时列表):"]
+                for c in FALLBACK_CAMPUSES:
+                    lines.append(f"  {c}")
+                lines.append(f"\n共 {len(FALLBACK_CAMPUSES)} 个校区")
+                return "\n".join(lines)
+            return f"获取失败: {e}"
 
     async def _do_buildings(self, event: AstrMessageEvent, args: list) -> str:
         if not args:
-            return "用法: /power buildings <校区名>\n例如: /power buildings 沁园"
+            return f"用法: /power buildings <校区名>\n可选: {', '.join(FALLBACK_CAMPUSES)}"
         campus = args[0]
-
-        uid = _uid(event)
-        account = await self.db.get_account(uid)
-        if not account:
-            accounts = await self.db.get_all_accounts()
-            account = accounts[0] if accounts else None
-        if not account:
-            return "请先绑定一个账号 (用于获取 Token)"
-        token = account.token
-        if not token or not account.token_is_valid():
-            try:
-                token = await self.api.login(account.student_id, account.get_password())
-            except Exception as e:
-                return f"登录失败: {e}"
+        try:
+            token = await self._get_any_token(_uid(event))
+        except RuntimeError as e:
+            if str(e) == "no_accounts":
+                return "请先绑定一个账号 (用于获取 Token)，然后才能查询楼栋列表"
+            return f"获取 Token 失败: {e}"
         try:
             campuses = await self.api.get_campuses(token)
         except Exception as e:
             return f"获取校区列表失败: {e}"
         xq_id = next((c["value"] for c in campuses if c["name"] == campus), None)
         if not xq_id:
-            names = [c["name"] for c in campuses]
-            return f"未找到校区「{campus}」，可选: {', '.join(names)}"
+            return f"未找到校区「{campus}」，可选: {', '.join(c['name'] for c in campuses)}"
         try:
             buildings = await self.api.get_buildings(token, xq_id)
         except Exception as e:
             return f"获取楼栋列表失败: {e}"
-        lines = [f"🏢 {campus} — 楼栋列表:"]
+        lines = [f"🏢 {campus} — 楼栋 ({len(buildings)} 栋):"]
         for b in buildings:
             lines.append(f"  {b['name']}")
-        lines.append(f"\n共 {len(buildings)} 栋")
         return "\n".join(lines)
 
-    # ---- List (admin) ----
+    # ---- List ----
 
     async def _do_list(self, event: AstrMessageEvent, args: list) -> str:
         accounts = await self.db.get_all_accounts()
@@ -480,15 +401,13 @@ class NUISTPowerPlugin(Star):
         for s in all_subs:
             if s.enabled:
                 sub_map.setdefault(s.account_id, []).append(s)
-
         if not accounts:
             return "暂无绑定账号"
-
         lines = ["📋 全部绑定账号"]
         for acc in accounts:
             bld = acc.loudong_id.split("&")[-1]
             rm = acc.room_id.split("&")[-1]
-            lines.append(f"\n  [{acc.room_label}] {acc.student_id} — {bld} {rm}号房")
+            lines.append(f"\n  {acc.student_id} — {bld} {rm}号房 ({acc.user_id})")
             subs = sub_map.get(acc.id, [])
             if subs:
                 for s in subs:
@@ -496,65 +415,51 @@ class NUISTPowerPlugin(Star):
                                  f"告警<{s.threshold}度, 严重<{s.critical_threshold}度")
             else:
                 lines.append(f"    📬 未订阅")
-
-        # Count stats
         total_subs = sum(len(v) for v in sub_map.values())
         lines.append(f"\n共 {len(accounts)} 个账号, {total_subs} 个活跃订阅")
         return "\n".join(lines)
 
-    # ---- 后台轮询 ----
+    # ---- Poll ----
 
     async def _poll_all_subscriptions(self):
         subs = await self.db.get_all_enabled_subscriptions()
         now = datetime.now(timezone.utc)
-
         for sub in subs:
             try:
-                if sub.last_check_at:
-                    elapsed = (now - sub.last_check_at).total_seconds() / 60
-                    if elapsed < sub.interval_minutes:
-                        continue
-
+                if sub.last_check_at and (now - sub.last_check_at).total_seconds() / 60 < sub.interval_minutes:
+                    continue
                 account = await self.db.get_account_by_id(sub.account_id)
                 if not account:
                     continue
-
                 token = account.token
                 if not token or not account.token_is_valid():
                     token = await self.api.login(account.student_id, account.get_password())
-                    await self.db.update_token(account.user_id, account.room_label, token)
-
+                    await self.db.update_token(account.user_id, token)
                 params = self.api.build_room_params(account.room_id, account.xiaoqu_id, account.loudong_id)
                 result_data, new_token = await self.api.query_with_refresh(
                     token, account.student_id, account.get_password(), params)
                 if new_token:
-                    await self.db.update_token(account.user_id, account.room_label, new_token)
-
+                    await self.db.update_token(account.user_id, new_token)
                 balance = self.api.parse_balance(result_data)
                 await self.db.update_subscription_check(sub.id, balance)
                 await self.db.add_record(account.id, balance)
 
+                bld = account.loudong_id.split("&")[-1]
+                rm = account.room_id.split("&")[-1]
                 if balance < sub.critical_threshold:
-                    alert = (f"🚨 严重电量告警!\n"
-                             f"  房间: [{account.room_label}] {account.loudong_id} {account.room_id}\n"
-                             f"  剩余电量: {balance} 度\n"
-                             f"  严重阈值: {sub.critical_threshold} 度\n"
-                             f"  请立即充值!")
+                    alert = (f"🚨 严重电量告警!\n  房间: {bld} {rm}号房\n"
+                             f"  剩余电量: {balance} 度\n  严重阈值: {sub.critical_threshold} 度\n  请立即充值!")
                     await self._send_to_session(sub.session_id, alert)
                     admin = self.config.get("admin_alert_session", "").strip()
                     if admin and admin != sub.session_id:
                         await self._send_to_session(admin, alert)
                 elif balance < sub.threshold:
-                    alert = (f"⚡ 电量告警!\n"
-                             f"  房间: [{account.room_label}] {account.loudong_id} {account.room_id}\n"
-                             f"  剩余电量: {balance} 度\n"
-                             f"  告警阈值: {sub.threshold} 度\n"
-                             f"  请及时充值!")
+                    alert = (f"⚡ 电量告警!\n  房间: {bld} {rm}号房\n"
+                             f"  剩余电量: {balance} 度\n  告警阈值: {sub.threshold} 度\n  请及时充值!")
                     await self._send_to_session(sub.session_id, alert)
                     admin = self.config.get("admin_alert_session", "").strip()
                     if admin and admin != sub.session_id:
                         await self._send_to_session(admin, alert)
-
             except Exception as e:
                 self.logger.error(f"订阅 {sub.id} 检查失败: {e}")
 
@@ -562,37 +467,33 @@ class NUISTPowerPlugin(Star):
         try:
             handler = self.context.get_send_handler(session_id)
             if handler:
-                await handler.send("astrbot_plugin_nuist_power",
-                                   [handler.build_message(message)])
+                await handler.send("astrbot_plugin_nuist_power", [handler.build_message(message)])
         except Exception as e:
             self.logger.warning(f"发送到 {session_id} 失败: {e}")
-
-    # ---- 帮助 ----
 
     @staticmethod
     def _help_text() -> str:
         return (
-            "NUIST 电费查询 命令帮助\n"
-            + "-" * 24 + "\n"
-            "/power [标签]                 — 查询电量 (多房间默认全部)\n"
-            "/power bind <标签> <学号> <密码> <校区> <楼栋> <房号>\n"
-            "/power bindraw <标签> ...    — 绑定 (原始ID)\n"
-            "/power unbind [标签]         — 解绑\n"
-            "/power sub [标签] [分钟] [阈值] [严重阈值]\n"
-            "/power unsub [标签]          — 取消订阅\n"
-            "/power status                — 查看全部绑定状态\n"
-            "/power history [标签]        — 余额历史 + 用量估算\n"
-            "/power set <标签> <校区> <楼栋> <房号>\n"
-            "/power setraw <标签> ...     — 修改 (原始ID)\n"
-            "/power campuses              — 查看可选校区\n"
-            "/power buildings <校区>      — 查看楼栋列表\n"
-            "/power list                  — 查看全部账号与订阅\n"
-            "/power help                  — 帮助\n"
-            + "-" * 24 + "\n"
-            "示例:\n"
-            "  /power bind 宿舍 <学号> <密码> 沁园 沁园22栋 214\n"
-            "  /power bind 实验室 <学号> <密码> 沁园 沁园22栋 101\n"
-            "  /power 宿舍                 — 只查宿舍\n"
-            "  /power sub 宿舍 60 10 5     — 订阅: 60分钟, <10度提醒, <5度严重\n"
-            "  /power history 宿舍          — 查看宿舍用电历史"
+            "NUIST 电费查询 命令帮助\n" + "-" * 24 + "\n"
+            "/power                        — 查询电量\n"
+            "/power bind <学号> <密码> <校区> <楼栋> <房号>\n"
+            "/power bindraw ...           — 绑定 (原始ID)\n"
+            "/power unbind                — 解绑\n"
+            "/power sub [分钟] [阈值] [严重阈值]\n"
+            "/power unsub                 — 取消订阅\n"
+            "/power status                — 查看状态\n"
+            "/power history               — 余额历史 + 用量估算\n"
+            "/power set <校区> <楼栋> <房号>\n"
+            "/power setraw ...            — 修改 (原始ID)\n"
+            "/power campuses              — 查看校区\n"
+            "/power buildings <校区>      — 查看楼栋\n"
+            "/power list                  — 查看全部账号\n"
+            "/power help                  — 帮助\n" + "-" * 24 + "\n"
+            "典型流程:\n"
+            "  1. /power campuses          — 看看有哪些校区\n"
+            "  2. /power buildings 沁园    — 看看沁园有哪些楼栋\n"
+            "  3. /power bind <学号> <密码> 沁园 沁园22栋 214\n"
+            "  4. /power                   — 查询电量\n"
+            "  5. /power sub 60 10 5       — 订阅: 60分钟, <10度告警, <5度严重\n"
+            "  6. /power history            — 查看用电趋势\n"
         )

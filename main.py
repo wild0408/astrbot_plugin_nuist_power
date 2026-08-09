@@ -461,11 +461,17 @@ class NUISTPowerPlugin(Star):
 
     async def _send_to_session(self, session_id: str, message: str):
         try:
-            handler = self.context.get_send_handler(session_id)
-            if handler:
-                await handler.send("astrbot_plugin_nuist_power", [handler.build_message(message)])
+            # AstrBot v4.27+ uses context directly
+            await self.context.send_message(session_id, message)
+        except AttributeError:
+            try:
+                handler = self.context.get_send_handler(session_id)
+                if handler:
+                    await handler.send("astrbot_plugin_nuist_power", [handler.build_message(message)])
+            except Exception:
+                self.logger.warning(f"发送告警到 {session_id} 失败 (API 不兼容)")
         except Exception as e:
-            self.logger.warning(f"发送到 {session_id} 失败: {e}")
+            self.logger.warning(f"发送告警到 {session_id} 失败: {e}")
 
     @staticmethod
     def _help_text() -> str:

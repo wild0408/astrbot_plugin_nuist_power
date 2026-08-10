@@ -415,8 +415,17 @@ class NUISTPowerPlugin(Star):
 
     async def _poll_all_subscriptions(self):
         subs = await self.db.get_all_enabled_subscriptions()
+        now_ts = time.time()
         for sub in subs:
             try:
+                # Respect interval: skip if not due yet
+                if sub.last_check_at:
+                    try:
+                        last_ts = sub.last_check_at.timestamp()
+                        if (now_ts - last_ts) / 60 < sub.interval_minutes:
+                            continue
+                    except Exception:
+                        pass
                 account = await self.db.get_account_by_id(sub.account_id)
                 if not account:
                     continue
@@ -430,8 +439,11 @@ class NUISTPowerPlugin(Star):
                 if new_token:
                     await self.db.update_token(account.user_id, new_token)
                 balance = self.api.parse_balance(result_data)
+                prev_balance = sub.last_balance
                 await self.db.update_subscription_check(sub.id, balance)
-                await self.db.add_record(account.id, balance)
+                # Only record if balance changed (avoid duplicate history entries)
+                if prev_balance is None or abs(balance - prev_balance) > 0.001:
+                    await self.db.add_record(account.id, balance)
 
                 bld = account.loudong_id.split("&")[-1]
                 rm = account.room_id.split("&")[-1]

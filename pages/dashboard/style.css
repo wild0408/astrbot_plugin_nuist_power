@@ -1,0 +1,209 @@
+/* NUIST Power Dashboard Styles */
+:root {
+  --bg: #f5f7fa;
+  --card-bg: #ffffff;
+  --text: #1a1a2e;
+  --text-secondary: #666;
+  --border: #e0e0e0;
+  --primary: #4f9cf5;
+  --alert-bg: #fff5f5;
+  --alert-border: #ffcccc;
+  --ok: #22c55e;
+  --bad: #ef4444;
+  --shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+[data-theme="dark"] {
+  --bg: #1a1a2e;
+  --card-bg: #252540;
+  --text: #e0e0e0;
+  --text-secondary: #999;
+  --border: #333;
+  --primary: #6db3f8;
+  --alert-bg: #3d1f1f;
+  --alert-border: #662222;
+  --ok: #4ade80;
+  --bad: #f87171;
+  --shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+#app {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px 16px;
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.header h1 {
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+.badge {
+  font-size: 0.75rem;
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: var(--primary);
+  color: #fff;
+}
+
+/* Loading / Error / Empty */
+.loading {
+  text-align: center;
+  padding: 40px 0;
+  color: var(--text-secondary);
+}
+.error {
+  background: var(--alert-bg);
+  border: 1px solid var(--alert-border);
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  color: var(--bad);
+}
+.empty {
+  text-align: center;
+  padding: 60px 0;
+  color: var(--text-secondary);
+}
+.empty-icon { font-size: 3rem; margin-bottom: 12px; }
+.empty-hint { font-size: 0.85rem; margin-top: 8px; }
+
+.hidden { display: none !important; }
+
+/* Summary Cards */
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.card {
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+.card-alert {
+  border: 2px solid var(--bad);
+}
+.card-icon { font-size: 1.5rem; margin-bottom: 6px; }
+.card-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+.card-unit {
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--text-secondary);
+  margin-left: 2px;
+}
+.card-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+/* Chart */
+.chart-section {
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow);
+}
+.chart-section h2 {
+  font-size: 1rem;
+  margin-bottom: 12px;
+}
+.account-selector {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+  max-width: 100%;
+}
+.chart-container {
+  position: relative;
+  height: 260px;
+  width: 100%;
+}
+.chart-empty {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 40px 0;
+}
+
+/* Table */
+.table-section {
+  background: var(--card-bg);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+.table-section h2 {
+  font-size: 1rem;
+  margin-bottom: 12px;
+}
+.table-wrap {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+th, td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+th {
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+td:last-child { white-space: normal; min-width: 100px; }
+
+.status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.status-ok {
+  background: color-mix(in srgb, var(--ok) 15%, transparent);
+  color: var(--ok);
+}
+.status-bad {
+  background: color-mix(in srgb, var(--bad) 15%, transparent);
+  color: var(--bad);
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  .summary-cards { grid-template-columns: repeat(2, 1fr); }
+  .header h1 { font-size: 1.1rem; }
+  .chart-container { height: 200px; }
+}

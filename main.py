@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
 from astrbot.api import logger
+from astrbot.api.web import json_response, error_response, request
 from sqlalchemy import select
 
 from .api import NUISTPowerAPI
@@ -49,6 +50,12 @@ class NUISTPowerPlugin(Star):
         os.makedirs(data_dir, exist_ok=True)
         self.db = DBManager(f"sqlite+aiosqlite:///{os.path.join(data_dir, 'power.db')}")
         asyncio.create_task(self._init_and_poll())
+
+        # ---- WebUI API ----
+        PLUGIN_NAME = "astrbot_plugin_nuist_power"
+        context.register_web_api(f"/{PLUGIN_NAME}/dashboard/overview", self._web_overview, ["GET"], "仪表盘概览")
+        context.register_web_api(f"/{PLUGIN_NAME}/dashboard/history", self._web_history, ["GET"], "余额历史")
+        context.register_web_api(f"/{PLUGIN_NAME}/dashboard/all", self._web_all, ["GET"], "全部账号")
 
     async def _init_and_poll(self):
         try:
@@ -477,6 +484,91 @@ class NUISTPowerPlugin(Star):
                 self.logger.warning(f"发送告警到 {session_id} 失败 (API 不兼容)")
         except Exception as e:
             self.logger.warning(f"发送告警到 {session_id} 失败: {e}")
+
+    # ---- WebUI Handlers ----
+
+    async def _web_overview(self):
+        """Return dashboard overview: all accounts + subscriptions + latest balance."""
+        try:
+            accounts = await self.db.get_all_accounts()
+            subs = await self.db.get_all_subscriptions()
+            sub_map = {}
+            for s in subs:
+                sub_map.setdefault(s.account_id, []).append({
+                    "id": s.id, "interval_minutes": s.interval_minutes,
+                    "threshold": s.threshold, "critical_threshold": s.critical_threshold,
+                    "enabled": s.enabled, "last_check_at": str(s.last_check_at) if s.last_check_at else None,
+                    "last_balance": s.last_balance,
+                })
+
+            items = []
+            for acc in accounts:
+                records = await self.db.get_records(acc.id, limit=30)
+                history = [{"balance": r.balance, "time": str(r.recorded_at)} for r in reversed(records)]
+
+                # Calculate daily consumption from history
+                daily_info = self.api.estimate_daily_consumption(list(reversed(records))) if len(records) >= 2 else None
+
+                # Try to get latest balance
+                latest_balance = history[-1]["balance"] if history else None
+
+                items.append({
+                    "id": acc.id,
+                    "user_id": acc.user_id,
+                    "student_id": acc.student_id,
+                    "building": acc.loudong_id.split("&")[-1] if "&" in acc.loudong_id else acc.loudong_id,
+                    "room": acc.room_id.split("&")[-1] if "&" in acc.room_id else acc.room_id,
+                    "campus": acc.xiaoqu_id.split("&")[-1] if "&" in acc.xiaoqu_id else acc.xiaoqu_id,
+                    "token_valid": acc.token_is_valid(),
+                    "token_hours": self.api.token_remaining_hours(acc.token) if acc.token else 0,
+                    "latest_balance": latest_balance,
+                    "daily_consumption": daily_info,
+                    "subscriptions": sub_map.get(acc.id, []),
+                    "history": history,
+                })
+            return json_response({"accounts": items, "username": request.username})
+        except Exception as e:
+            return error_response(str(e))
+
+    async def _web_history(self):
+        """Return balance history for a specific account."""
+        account_id = request.query.get("account_id", type=int)
+        limit = request.query.get("limit", 30, type=int)
+        if not account_id:
+            return error_response("account_id is required")
+        try:
+            records = await self.db.get_records(account_id, limit=limit)
+            data = [{"balance": r.balance, "time": str(r.recorded_at)} for r in reversed(records)]
+            return json_response({"history": data, "account_id": account_id})
+        except Exception as e:
+            return error_response(str(e))
+
+    async def _web_all(self):
+        """Return all accounts and subscriptions (admin view)."""
+        try:
+            accounts = await self.db.get_all_accounts()
+            subs = await self.db.get_all_subscriptions()
+            sub_map = {}
+            for s in subs:
+                sub_map.setdefault(s.account_id, []).append({
+                    "id": s.id, "session_id": s.session_id,
+                    "interval_minutes": s.interval_minutes,
+                    "threshold": s.threshold, "critical_threshold": s.critical_threshold,
+                    "enabled": s.enabled, "last_balance": s.last_balance,
+                })
+            items = []
+            for acc in accounts:
+                items.append({
+                    "id": acc.id, "user_id": acc.user_id, "student_id": acc.student_id,
+                    "building": acc.loudong_id.split("&")[-1] if "&" in acc.loudong_id else acc.loudong_id,
+                    "room": acc.room_id.split("&")[-1] if "&" in acc.room_id else acc.room_id,
+                    "campus": acc.xiaoqu_id.split("&")[-1] if "&" in acc.xiaoqu_id else acc.xiaoqu_id,
+                    "token_valid": acc.token_is_valid(),
+                    "subscriptions": sub_map.get(acc.id, []),
+                })
+            return json_response({"accounts": items, "total": len(items), "username": request.username})
+        except Exception as e:
+            return error_response(str(e))
 
     @staticmethod
     def _help_text() -> str:

@@ -1,62 +1,120 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>NUIST 电费仪表盘</title>
-    <link rel="stylesheet" href="./style.css" />
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
-  </head>
-  <body>
-    <div id="app">
-      <header class="header">
-        <h1>⚡ NUIST 电费仪表盘</h1>
-        <span id="refresh-badge" class="badge">实时推送 (SSE)</span>
-      </header>
+<head>
+<meta charset="utf-8"/>
+<title>NUIST Power</title>
+<link rel="stylesheet" href="./style.css"/>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div id="app">
+<nav id="sidebar">
+<div class="sidebar-brand">NUIST Power</div>
+<ul class="sidebar-nav">
+<li class="nav-item active" data-tab="dashboard">Dashboard</li>
+<li class="nav-item" data-tab="users">Users</li>
+</ul>
+</nav>
+<main id="main">
+<div id="loading">Loading...</div>
+<div id="error" class="hidden"></div>
+<div id="tab-dashboard" class="tab-content">
+<div id="empty" class="hidden">No accounts</div>
+<div id="content" class="hidden">
+<div id="summary-cards"></div>
+<section class="card">
+<h2>History</h2>
+<div class="group-toggle"><button class="group-btn active" data-group="raw">Raw</button><button class="group-btn" data-group="day">Day</button><button class="group-btn" data-group="month">Month</button></div>
+<select id="account-selector"></select>
+<div class="chart-wrap"><canvas id="chart"></canvas></div>
+<div id="chart-empty" class="hidden">No data</div>
+</section>
+</div>
+</div>
+<div id="tab-users" class="tab-content hidden">
+<section class="card"><h2>Accounts</h2>
+<div class="table-wrap"><table><thead><tr><th>Student</th><th>User</th><th>Campus</th><th>Building</th><th>Room</th><th>Token</th><th>Sub</th><th>Balance</th></tr></thead><tbody id="user-tbody"></tbody></table></div>
+</section>
+</div>
+</main>
+</div>
+<script>
+var sdk=document.createElement("script");
+sdk.src="/api/plugin/page/bridge-sdk.js";
+sdk.onload=init;
+sdk.onerror=function(){document.getElementById("loading").textContent="SDK failed";};
+document.head.appendChild(sdk);
 
-      <div id="loading" class="loading">加载中...</div>
-      <div id="error" class="error hidden"></div>
-      <div id="empty" class="empty hidden">
-        <div class="empty-icon">📭</div>
-        <p>暂无绑定账号</p>
-        <p class="empty-hint">通过聊天命令 /power bind 绑定账号，或在插件配置中通过 WebUI 添加</p>
-      </div>
+async function init(){
+var B=window.AstrBotPluginPage,$=id=>document.getElementById(id);
+var chart=null,group="raw",accounts=[],timer=null;
+await B.ready();
+function t(){document.documentElement.setAttribute("data-theme",B.getContext()?.isDark?"dark":"light");}
+t();B.onContext(t);
+$("loading").classList.add("hidden");
 
-      <div id="content" class="hidden">
-        <div id="summary-cards" class="summary-cards"></div>
+document.querySelectorAll(".nav-item").forEach(function(i){
+i.addEventListener("click",function(){
+document.querySelectorAll(".nav-item").forEach(function(j){j.classList.remove("active");});
+i.classList.add("active");
+document.querySelectorAll(".tab-content").forEach(function(c){c.classList.add("hidden");});
+$("tab-"+i.dataset.tab).classList.remove("hidden");
+if(i.dataset.tab==="dashboard"&&$("account-selector").dataset.init)lc();
+});
+});
 
-        <section class="chart-section">
-          <div class="chart-header">
-            <h2>📈 余额历史趋势</h2>
-            <div class="group-toggle">
-              <button class="group-btn active" data-group="raw">原始</button>
-              <button class="group-btn" data-group="day">按天</button>
-              <button class="group-btn" data-group="month">按月</button>
-            </div>
-          </div>
-          <select id="account-selector" class="account-selector"></select>
-          <div class="chart-container">
-            <canvas id="chart"></canvas>
-          </div>
-          <div id="chart-empty" class="chart-empty hidden">暂无历史数据</div>
-        </section>
+async function ld(){
+try{
+var d=await B.apiGet("dashboard/overview");
+if(!d||!d.accounts)return;
+accounts=d.accounts;
+var subs=0,alerts=0;
+accounts.forEach(function(a){(a.subscriptions||[]).forEach(function(s){if(s.enabled){subs++;if(a.latest_balance!=null&&a.latest_balance<s.threshold)alerts++;}});});
+$("summary-cards").innerHTML=[{l:"Accts",v:accounts.length},{l:"Subs",v:subs},{l:"Alerts",v:alerts},{l:"TokOK",v:accounts.filter(function(a){return a.token_valid;}).length}].map(function(c){return"<div class=\"card\"><div class=\"card-value\">"+c.v+"</div><div class=\"card-label\">"+c.l+"</div></div>";}).join("");
+$("user-tbody").innerHTML=accounts.map(function(a){
+var s=(a.subscriptions||[]).filter(function(s){return s.enabled;}).map(function(s){return s.interval_minutes+"m/"+s.threshold;}).join(",")||"-";
+var b=a.latest_balance!=null?a.latest_balance.toFixed(2)+" kWh":"-";
+return"<tr><td>"+a.student_id+"</td><td>"+a.user_id.split("@")[0]+"</td><td>"+a.campus+"</td><td>"+a.building+"</td><td>"+a.room+"</td><td>"+(a.token_valid?"OK":"EXP")+"</td><td>"+s+"</td><td>"+b+"</td></tr>";
+}).join("");
+if(!$("account-selector").dataset.init){
+$("account-selector").innerHTML=accounts.map(function(a){return"<option value=\""+a.id+"\">"+a.building+" "+a.room+" ("+a.student_id+")</option>";}).join("");
+$("account-selector").onchange=lc;
+$("account-selector").dataset.init="1";
+lc();
+}
+$("empty").classList.toggle("hidden",accounts.length>0);
+$("content").classList.toggle("hidden",accounts.length===0);
+$("error").classList.add("hidden");
+}catch(e){$("error").textContent="Error: "+(e.message||e);$("error").classList.remove("hidden");}
+}
 
-        <section class="table-section">
-          <h2>📋 全部账号</h2>
-          <div class="table-wrap">
-            <table id="account-table">
-              <thead>
-                <tr>
-                  <th>学号</th><th>校区</th><th>楼栋</th><th>房号</th>
-                  <th>Token</th><th>订阅</th><th>最近余额</th>
-                </tr>
-              </thead>
-              <tbody id="account-tbody"></tbody>
-            </table>
-          </div>
-        </section>
-      </div>
-    </div>
-    <script type="module" src="./app.js"></script>
-  </body>
+async function lc(){
+var id=parseInt($("account-selector").value);if(!id)return;
+try{var d=await B.apiGet("dashboard/history_grouped",{account_id:id,group:group});rc(d.history,d.group);}
+catch(e){$("chart-empty").classList.remove("hidden");$("chart").style.display="none";}
+}
+
+document.querySelectorAll(".group-btn").forEach(function(b){
+b.addEventListener("click",async function(){
+document.querySelectorAll(".group-btn").forEach(function(x){x.classList.remove("active");});
+b.classList.add("active");group=b.dataset.group;await lc();
+});
+});
+
+function rc(h,g){
+var ce=$("chart-empty"),cv=$("chart");
+if(!h||h.length<2){ce.classList.remove("hidden");cv.style.display="none";if(chart){chart.destroy();chart=null;}return;}
+ce.classList.add("hidden");cv.style.display="";
+var dark=B.getContext()?.isDark||false;
+var gc=dark?"rgba(255,255,255,0.1)":"rgba(0,0,0,0.1)",tc=dark?"#aaa":"#666";
+var labels=h.map(function(p){var d=new Date(p.time+"Z");return (d.getMonth()+1)+"/"+d.getDate();});
+var vals=h.map(function(p){return p.balance;});
+if(chart)chart.destroy();
+chart=new Chart(cv,{type:"line",data:{labels:labels,datasets:[{label:"kWh",data:vals,borderColor:"#4f9cf5",backgroundColor:dark?"rgba(79,156,245,0.15)":"rgba(79,156,245,0.08)",fill:true,tension:0.3,pointRadius:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc}}},scales:{x:{ticks:{color:tc},grid:{color:gc}},y:{ticks:{color:tc},grid:{color:gc}}}}});
+}
+ld();timer=setInterval(ld,30000);
+window.addEventListener("beforeunload",function(){if(timer)clearInterval(timer);if(chart)chart.destroy();});
+}
+</script>
+</body>
 </html>

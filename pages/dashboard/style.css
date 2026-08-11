@@ -1,3 +1,12 @@
+#app{display:flex;min-height:100vh}
+#sidebar{width:160px;min-width:160px;background:var(--sidebar-bg,#1e293b);color:var(--sidebar-text,#cbd5e1);display:flex;flex-direction:column;padding:16px 0}
+.sidebar-brand{font-size:.9rem;font-weight:700;padding:0 16px 20px;color:#fff}
+.sidebar-nav{list-style:none;flex:1}
+.nav-item{padding:8px 16px;cursor:pointer;font-size:.82rem;display:flex;align-items:center;gap:6px;border-left:3px solid transparent;transition:all .15s}
+.nav-item:hover{background:rgba(255,255,255,.06)}
+.nav-item.active{background:rgba(79,156,245,.15);color:#4f9cf5;border-left-color:#4f9cf5}
+#main{flex:1;padding:20px 24px;overflow-y:auto}
+.tab-content.hidden{display:none!important}
 /* NUIST Power Dashboard Styles */
 :root {
   --bg: #f5f7fa;

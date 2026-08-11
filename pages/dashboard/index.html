@@ -9,33 +9,31 @@
   </head>
   <body>
     <div id="app">
-      <!-- Header -->
       <header class="header">
         <h1>⚡ NUIST 电费仪表盘</h1>
         <span id="refresh-badge" class="badge">自动刷新</span>
       </header>
 
-      <!-- Loading -->
       <div id="loading" class="loading">加载中...</div>
-
-      <!-- Error -->
       <div id="error" class="error hidden"></div>
-
-      <!-- Empty state -->
       <div id="empty" class="empty hidden">
         <div class="empty-icon">📭</div>
         <p>暂无绑定账号</p>
         <p class="empty-hint">通过聊天命令 /power bind 绑定账号，或在插件配置中通过 WebUI 添加</p>
       </div>
 
-      <!-- Content -->
       <div id="content" class="hidden">
-        <!-- Summary Cards -->
         <div id="summary-cards" class="summary-cards"></div>
 
-        <!-- Chart -->
         <section class="chart-section">
-          <h2>📈 余额历史趋势</h2>
+          <div class="chart-header">
+            <h2>📈 余额历史趋势</h2>
+            <div class="group-toggle">
+              <button class="group-btn active" data-group="raw">原始</button>
+              <button class="group-btn" data-group="day">按天</button>
+              <button class="group-btn" data-group="month">按月</button>
+            </div>
+          </div>
           <select id="account-selector" class="account-selector"></select>
           <div class="chart-container">
             <canvas id="chart"></canvas>
@@ -43,20 +41,14 @@
           <div id="chart-empty" class="chart-empty hidden">暂无历史数据</div>
         </section>
 
-        <!-- Account Table -->
         <section class="table-section">
           <h2>📋 全部账号</h2>
           <div class="table-wrap">
             <table id="account-table">
               <thead>
                 <tr>
-                  <th>学号</th>
-                  <th>校区</th>
-                  <th>楼栋</th>
-                  <th>房号</th>
-                  <th>Token</th>
-                  <th>订阅</th>
-                  <th>最近余额</th>
+                  <th>学号</th><th>校区</th><th>楼栋</th><th>房号</th>
+                  <th>Token</th><th>订阅</th><th>最近余额</th>
                 </tr>
               </thead>
               <tbody id="account-tbody"></tbody>

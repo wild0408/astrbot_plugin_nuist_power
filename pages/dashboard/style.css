@@ -130,7 +130,36 @@ body {
 }
 .chart-section h2 {
   font-size: 1rem;
+}
+
+.chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.group-toggle {
+  display: flex;
+  gap: 4px;
+}
+.group-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.78rem;
+  transition: all 0.15s;
+}
+.group-btn:hover { border-color: var(--primary); color: var(--primary); }
+.group-btn.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
 }
 .account-selector {
   padding: 6px 10px;

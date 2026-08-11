@@ -1,7 +1,7 @@
 name: astrbot_plugin_nuist_power
 display_name: NUIST 电费查询
 desc: 南京信息工程大学电费余额查询插件，支持多用户绑定、定时订阅、低电量自动告警。
-version: 1.1.0
+version: 1.1.1
 author: wild0408
 repo: https://github.com/wild0408/astrbot_plugin_nuist_power
 astrbot_version: ">=4.17.0"

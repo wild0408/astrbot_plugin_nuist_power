@@ -55,6 +55,7 @@ class NUISTPowerPlugin(Star):
         PLUGIN_NAME = "astrbot_plugin_nuist_power"
         context.register_web_api(f"/{PLUGIN_NAME}/dashboard/overview", self._web_overview, ["GET"], "仪表盘概览")
         context.register_web_api(f"/{PLUGIN_NAME}/dashboard/history", self._web_history, ["GET"], "余额历史")
+        context.register_web_api(f"/{PLUGIN_NAME}/dashboard/history_grouped", self._web_history_grouped, ["GET"], "聚合历史")
         context.register_web_api(f"/{PLUGIN_NAME}/dashboard/all", self._web_all, ["GET"], "全部账号")
 
     async def _init_and_poll(self):
@@ -540,6 +541,42 @@ class NUISTPowerPlugin(Star):
             records = await self.db.get_records(account_id, limit=limit)
             data = [{"balance": r.balance, "time": str(r.recorded_at)} for r in reversed(records)]
             return json_response({"history": data, "account_id": account_id})
+        except Exception as e:
+            return error_response(str(e))
+
+    async def _web_history_grouped(self):
+        """Return balance history aggregated by day or month."""
+        account_id = request.query.get("account_id", type=int)
+        group = request.query.get("group", "raw")
+        if not account_id:
+            return error_response("account_id is required")
+        if group not in ("raw", "day", "month"):
+            return error_response("group must be raw, day, or month")
+        try:
+            from collections import defaultdict
+            records = await self.db.get_records(account_id, limit=500)
+            records = list(reversed(records))  # oldest first
+
+            if group == "raw":
+                data = [{"balance": r.balance, "time": str(r.recorded_at)} for r in records]
+            else:
+                buckets = defaultdict(list)
+                for r in records:
+                    t = r.recorded_at
+                    if group == "day":
+                        key = t.strftime("%Y-%m-%d")
+                    else:  # month
+                        key = t.strftime("%Y-%m")
+                    buckets[key].append(r.balance)
+                data = []
+                for key in sorted(buckets.keys()):
+                    vals = buckets[key]
+                    data.append({
+                        "balance": round(sum(vals) / len(vals), 4),
+                        "time": key,
+                        "count": len(vals),
+                    })
+            return json_response({"history": data, "account_id": account_id, "group": group})
         except Exception as e:
             return error_response(str(e))
 

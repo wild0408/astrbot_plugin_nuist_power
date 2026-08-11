@@ -584,14 +584,9 @@ class NUISTPowerPlugin(Star):
             while True:
                 try:
                     data = await self._stream_overview_data()
-                    yield f"data: {_json.dumps(data, ensure_ascii=False)}
-
-"
+                    yield f"data: {_json.dumps(data, ensure_ascii=False)}\n\n"
                 except Exception as e:
-                    yield f"event: error
-data: {_json.dumps({'error': str(e)})}
-
-"
+                    yield f"event: error\ndata: {_json.dumps({'error': str(e)})}\n\n"
                 await _asyncio.sleep(30)
         return stream_response(stream())
 

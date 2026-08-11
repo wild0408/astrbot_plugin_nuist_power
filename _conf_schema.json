@@ -14,6 +14,11 @@
     "type": "float",
     "default": 5.0
   },
+  "proxy": {
+    "description": "HTTP 代理地址 (如 http://127.0.0.1:10809)。留空则不使用代理。如果直连 icard.nuist.edu.cn 超时，请填写此项。",
+    "type": "string",
+    "default": ""
+  },
   "admin_alert_session": {
     "description": "管理员告警接收会话 ID (可选)",
     "type": "string"

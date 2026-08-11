@@ -10,19 +10,26 @@
 <body>
 <div id="app">
 <nav id="sidebar">
-<div class="sidebar-brand">⚡ NUIST 电费</div>
+<div class="sidebar-brand">NUIST 电费</div>
 <ul class="sidebar-nav">
 <li class="nav-item active" data-tab="dashboard"><span class="nav-icon">📊</span>仪表盘</li>
 <li class="nav-item" data-tab="users"><span class="nav-icon">👥</span>用户管理</li>
 </ul>
+<div class="sidebar-footer">v1.2.5 · wild0408</div>
 </nav>
 <main id="main">
 <div id="loading">加载中...</div>
 <div id="error" class="hidden"></div>
+
 <div id="tab-dashboard" class="tab-content">
-<div id="empty" class="hidden"><div class="empty-icon">📭</div><p>暂无绑定账号</p><p class="empty-hint">在聊天中使用 /power bind 绑定，或在 WebUI 配置中添加托管账号</p></div>
+<div id="empty" class="empty hidden">
+<span class="empty-icon">📭</span>
+<h3>暂无绑定账号</h3>
+<p class="empty-hint">在聊天中使用 /power bind 绑定账号，或在 WebUI 配置中添加托管账号</p>
+</div>
 <div id="content" class="hidden">
-<div id="summary-cards"></div>
+<div class="section-header"><h1>⚡ 概览</h1><p>NUIST 电费实时数据</p></div>
+<div id="summary-cards" class="summary-cards"></div>
 <section class="card">
 <div class="chart-header">
 <h2>📈 余额历史</h2>
@@ -34,18 +41,72 @@
 </div>
 <select id="account-selector"></select>
 <div class="chart-wrap"><canvas id="chart"></canvas></div>
-<div id="chart-empty" class="hidden"><div class="empty-icon">📉</div><p>暂无历史数据</p></div>
+<div id="chart-empty" class="hidden">
+<span class="empty-icon">📉</span>
+<p style="color:var(--text-muted);font-size:0.86rem">暂无历史数据</p>
+</div>
 </section>
 </div>
 </div>
+
 <div id="tab-users" class="tab-content hidden">
-<section class="card">
-<h2>👥 全部账号</h2>
-<div class="table-wrap"><table><thead><tr><th>学号</th><th>用户</th><th>校区</th><th>楼栋</th><th>房号</th><th>Token</th><th>订阅</th><th>余额</th></tr></thead><tbody id="user-tbody"></tbody></table></div>
+<div class="section-header"><h1>👥 全部账号</h1><p>所有已绑定的电费账号一览</p></div>
+<section class="card" style="padding:0;overflow:hidden">
+<div class="table-wrap" style="border:none;border-radius:0">
+<table><thead><tr><th>学号</th><th>用户</th><th>校区</th><th>楼栋</th><th>房号</th><th>Token</th><th>订阅</th><th>余额</th><th>操作</th></tr></thead><tbody id="user-tbody"></tbody></table>
+</div>
 </section>
 </div>
 </main>
 </div>
+
+<!-- Confirm Dialog -->
+<div id="confirm-dialog" class="modal-overlay hidden">
+<div class="modal-card" style="width:380px">
+<div class="modal-header"><h3>⚠️ 确认操作</h3></div>
+<div class="modal-body"><p id="confirm-msg" style="font-size:0.88rem;color:var(--text-secondary);line-height:1.6"></p></div>
+<div class="modal-footer">
+<button class="btn" id="confirm-cancel">取消</button>
+<button class="btn btn-danger" id="confirm-ok">确认解绑</button>
+</div>
+</div>
+</div>
+
+<!-- Edit Modal -->
+<div id="edit-modal" class="modal-overlay hidden">
+<div class="modal-card">
+<div class="modal-header">
+<h3>✏️ 编辑账号</h3>
+<button class="modal-close" id="modal-close">&times;</button>
+</div>
+<div class="modal-body">
+<input type="hidden" id="edit-account-id"/>
+<label>学号</label>
+<input id="edit-student-id" placeholder="学号"/>
+<label>密码 (留空不修改)</label>
+<input id="edit-password" type="password" placeholder="留空则不修改"/>
+<label>校区 ID (例: 3&沁园)</label>
+<input id="edit-xiaoqu-id" placeholder="3&沁园"/>
+<label>楼栋 ID (例: 15&沁园22栋)</label>
+<input id="edit-loudong-id" placeholder="15&沁园22栋"/>
+<label>房间 ID (例: 16072&214)</label>
+<input id="edit-room-id" placeholder="16072&214"/>
+<hr style="border-color:var(--border);margin:8px 0"/>
+<label style="margin-top:0">📬 订阅设置</label>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+<div><label>检查间隔 (分钟)</label><input id="edit-interval" type="number" min="10" value="60"/></div>
+<div><label>告警阈值 (度)</label><input id="edit-threshold" type="number" step="0.1" value="10"/></div>
+<div><label>严重阈值 (度)</label><input id="edit-critical" type="number" step="0.1" value="5"/></div>
+<div style="display:flex;align-items:flex-end;padding-bottom:2px"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0"><input type="checkbox" id="edit-sub-enabled" checked style="width:auto"/> 启用订阅</label></div>
+</div>
+</div>
+<div class="modal-footer">
+<button class="btn" id="modal-cancel">取消</button>
+<button class="btn btn-save" id="modal-save">保存</button>
+</div>
+</div>
+</div>
+
 <script type="module" src="./app.js"></script>
 </body>
 </html>

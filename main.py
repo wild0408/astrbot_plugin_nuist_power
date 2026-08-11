@@ -21,6 +21,7 @@ NUIST 电费查询插件 — AstrBot v4+
 import asyncio
 import os
 import time
+import httpx
 from datetime import datetime, timezone
 
 from astrbot.api.event import filter, AstrMessageEvent
@@ -43,12 +44,13 @@ class NUISTPowerPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
         self.config = config
-        self.api = NUISTPowerAPI()
+        self._alerted = set()
+        self.api = NUISTPowerAPI(proxy=self.config.get("proxy", "").strip() or None)
         plugin_dir = os.path.dirname(os.path.abspath(__file__))
         data_dir = os.path.join(plugin_dir, "data")
         os.makedirs(data_dir, exist_ok=True)
         self.db = DBManager(f"sqlite+aiosqlite:///{os.path.join(data_dir, 'power.db')}")
-        asyncio.create_task(self._init_and_poll())
+        self._poll_task = asyncio.create_task(self._init_and_poll())
 
         # ---- WebUI API ----
         PLUGIN_NAME = "astrbot_plugin_nuist_power"
@@ -57,6 +59,8 @@ class NUISTPowerPlugin(Star):
         context.register_web_api(f"/{PLUGIN_NAME}/dashboard/stream", self._web_dashboard_stream, ["GET"], "仪表盘SSE")
         context.register_web_api(f"/{PLUGIN_NAME}/dashboard/history_grouped", self._web_history_grouped, ["GET"], "聚合历史")
         context.register_web_api(f"/{PLUGIN_NAME}/dashboard/all", self._web_all, ["GET"], "全部账号")
+        context.register_web_api(f"/{PLUGIN_NAME}/dashboard/unbind", self._web_unbind, ["POST"], "解绑账号")
+        context.register_web_api(f"/{PLUGIN_NAME}/dashboard/edit", self._web_edit, ["POST"], "编辑账号")
 
     async def _init_and_poll(self):
         try:
@@ -66,14 +70,18 @@ class NUISTPowerPlugin(Star):
         except Exception as e:
             self.logger.error(f"插件初始化失败: {e}")
             return
+        self._poll_backoff = 60  # seconds, increases on network errors
         while True:
             try:
                 await self._poll_all_subscriptions()
+                self._poll_backoff = 60  # reset on success
             except Exception as e:
                 self.logger.error(f"轮询出错: {e}")
-            await asyncio.sleep(60)
+            await asyncio.sleep(self._poll_backoff)
 
     async def terminate(self):
+        if hasattr(self, "_poll_task") and self._poll_task:
+            self._poll_task.cancel()
         self.logger.info("NUIST 电费插件已卸载")
 
     # ---- Token helper ----
@@ -455,29 +463,61 @@ class NUISTPowerPlugin(Star):
 
                 bld = account.loudong_id.split("&")[-1]
                 rm = account.room_id.split("&")[-1]
+
+                # Determine current alert level
+                cur_level = None
                 if balance < sub.critical_threshold:
-                    alert = (f"🚨 严重电量告警!\n  房间: {bld} {rm}号房\n"
-                             f"  剩余电量: {balance} 度\n  严重阈值: {sub.critical_threshold} 度\n  请立即充值!")
-                    await self._send_to_session(sub.session_id, alert)
-                    admin = self.config.get("admin_alert_session", "").strip()
-                    if admin and admin != sub.session_id:
-                        await self._send_to_session(admin, alert)
+                    cur_level = "critical"
                 elif balance < sub.threshold:
-                    alert = (f"⚡ 电量告警!\n  房间: {bld} {rm}号房\n"
-                             f"  剩余电量: {balance} 度\n  告警阈值: {sub.threshold} 度\n  请及时充值!")
+                    cur_level = "warning"
+
+                # Only send if level changed or recovered+re-triggered
+                alert_key = (sub.id, cur_level)
+                if cur_level and alert_key not in self._alerted:
+                    if cur_level == "critical":
+                        alert = (f"🚨 严重电量告警!\n  房间: {bld} {rm}号房\n"
+                                 f"  剩余电量: {balance:.2f} 度\n  严重阈值: {sub.critical_threshold} 度\n  请立即充值!")
+                    else:
+                        alert = (f"⚡ 电量告警!\n  房间: {bld} {rm}号房\n"
+                                 f"  剩余电量: {balance:.2f} 度\n  告警阈值: {sub.threshold} 度\n  请及时充值!")
                     await self._send_to_session(sub.session_id, alert)
                     admin = self.config.get("admin_alert_session", "").strip()
                     if admin and admin != sub.session_id:
                         await self._send_to_session(admin, alert)
+                    self._alerted.add(alert_key)
+                    # Remove lower-level alert marker when escalating
+                    if cur_level == "critical":
+                        self._alerted.discard((sub.id, "warning"))
+
+                # Clear alert marker when balance recovers above threshold
+                if cur_level is None:
+                    self._alerted.discard((sub.id, "warning"))
+                    self._alerted.discard((sub.id, "critical"))
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as e:
+                self._poll_backoff = min(self._poll_backoff * 2, 600)
+                self.logger.warning(f"订阅 {sub.id} 网络超时 (下次重试 {self._poll_backoff}s): {e}")
+                break  # Stop checking other subs on network failure
             except Exception as e:
                 self.logger.error(f"订阅 {sub.id} 检查失败: {e}", exc_info=True)
 
     async def _send_to_session(self, session_id: str, message: str):
+        # Skip WebUI-managed accounts (no real chat session)
+        if not session_id or session_id.startswith("webui:"):
+            return
         try:
             chain = MessageChain().message(message)
             await self.context.send_message(session_id, chain)
-        except Exception as e:
-            self.logger.warning(f"发送告警到 {session_id} 失败: {e}")
+            return
+        except Exception:
+            pass
+        # Fallback: try admin_alert_session
+        admin = self.config.get("admin_alert_session", "").strip()
+        if admin and admin != session_id:
+            try:
+                chain = MessageChain().message(message)
+                await self.context.send_message(admin, chain)
+            except Exception:
+                pass
 
     # ---- WebUI Handlers ----
 
@@ -513,6 +553,9 @@ class NUISTPowerPlugin(Star):
                     "building": acc.loudong_id.split("&")[-1] if "&" in acc.loudong_id else acc.loudong_id,
                     "room": acc.room_id.split("&")[-1] if "&" in acc.room_id else acc.room_id,
                     "campus": acc.xiaoqu_id.split("&")[-1] if "&" in acc.xiaoqu_id else acc.xiaoqu_id,
+                    "xiaoqu_id": acc.xiaoqu_id,
+                    "loudong_id": acc.loudong_id,
+                    "room_id": acc.room_id,
                     "token_valid": acc.token_is_valid(),
                     "token_hours": self.api.token_remaining_hours(acc.token) if acc.token else 0,
                     "latest_balance": latest_balance,
@@ -644,6 +687,57 @@ class NUISTPowerPlugin(Star):
                     "subscriptions": sub_map.get(acc.id, []),
                 })
             return json_response({"accounts": items, "total": len(items), "username": request.username})
+        except Exception as e:
+            return error_response(str(e))
+
+    async def _web_unbind(self):
+        """Unbind an account by account_id."""
+        try:
+            body = await request.json()
+            account_id = int(body.get("account_id", 0))
+            if not account_id:
+                return error_response("缺少 account_id")
+            ok = await self.db.delete_account_by_id(account_id)
+            if ok:
+                return json_response({"success": True, "message": "账号已解绑"})
+            return error_response("账号不存在")
+        except Exception as e:
+            return error_response(str(e))
+
+    async def _web_edit(self):
+        """Edit account + subscription settings."""
+        try:
+            body = await request.json()
+            account_id = int(body.get("account_id", 0))
+            if not account_id:
+                return error_response("缺少 account_id")
+
+            # Update account fields
+            kwargs = {}
+            for field in ["room_id", "loudong_id", "xiaoqu_id", "password", "student_id"]:
+                if field in body and body[field]:
+                    val = body[field]
+                    if field == "password":
+                        import base64
+                        val = base64.b64encode(val.encode()).decode()
+                    kwargs[field] = val
+            if kwargs:
+                ok = await self.db.update_account(account_id, **kwargs)
+                if not ok:
+                    return error_response("账号不存在")
+
+            # Update subscription if any sub fields provided
+            sub_fields = ["interval_minutes", "threshold", "critical_threshold", "enabled"]
+            if any(f in body for f in sub_fields):
+                await self.db.upsert_subscription_by_account_id(
+                    account_id=account_id,
+                    interval_minutes=int(body.get("interval_minutes", 60)),
+                    threshold=float(body.get("threshold", 10.0)),
+                    critical_threshold=float(body.get("critical_threshold", 5.0)),
+                    enabled=bool(body.get("enabled", True)),
+                )
+
+            return json_response({"success": True, "message": "已更新"})
         except Exception as e:
             return error_response(str(e))
 

@@ -25,6 +25,15 @@ class NUISTPowerAPI:
     FEEITEMID = "448"
     TIMEOUT = 15
 
+    def __init__(self, proxy: str = None):
+        self.proxy = proxy
+
+    def _client(self):
+        kwargs = {"timeout": self.TIMEOUT}
+        if self.proxy:
+            kwargs["proxy"] = self.proxy
+        return httpx.AsyncClient(**kwargs)
+
     # ---- Auth ----
 
     async def login(self, student_id: str, password: str) -> str:
@@ -43,7 +52,7 @@ class NUISTPowerAPI:
             "loginFrom": "pc",
             "logintype": "snoNew",
         }
-        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
+        async with self._client() as client:
             resp = await client.post(self.AUTH_URL, headers=headers, data=data)
             result = resp.json()
             token = result.get("access_token")
@@ -65,7 +74,7 @@ class NUISTPowerAPI:
 
     async def query(self, token: str, room_params: dict) -> dict:
         headers = self._auth_headers(token)
-        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
+        async with self._client() as client:
             resp = await client.post(
                 self.QUERY_URL, headers=headers, data=room_params
             )
@@ -82,6 +91,8 @@ class NUISTPowerAPI:
         try:
             result = await self.query(token, room_params)
             return result, None
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError):
+            raise  # Network error — don''t try re-login, let caller handle
         except RuntimeError:
             pass
         new_token = await self.login(student_id, password)
@@ -92,7 +103,7 @@ class NUISTPowerAPI:
 
     async def _select_query(self, token: str, params: dict) -> List[dict]:
         headers = self._auth_headers(token)
-        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
+        async with self._client() as client:
             resp = await client.post(
                 self.QUERY_URL, headers=headers, data=params
             )

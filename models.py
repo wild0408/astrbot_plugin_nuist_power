@@ -162,6 +162,34 @@ class DBManager:
             await session.commit()
             return True
 
+    async def delete_account_by_id(self, account_id: int) -> bool:
+        async with self.async_session() as session:
+            stmt = select(PowerAccount).where(PowerAccount.id == account_id)
+            result = await session.execute(stmt)
+            account = result.scalar_one_or_none()
+            if not account:
+                return False
+            for stmt_cls in [PowerSubscription, PowerRecord]:
+                sub_stmt = select(stmt_cls).where(stmt_cls.account_id == account.id)
+                for rec in (await session.execute(sub_stmt)).scalars().all():
+                    await session.delete(rec)
+            await session.delete(account)
+            await session.commit()
+            return True
+
+    async def update_account(self, account_id: int, **kwargs):
+        async with self.async_session() as session:
+            stmt = select(PowerAccount).where(PowerAccount.id == account_id)
+            result = await session.execute(stmt)
+            account = result.scalar_one_or_none()
+            if not account:
+                return False
+            for key, val in kwargs.items():
+                if hasattr(account, key) and val is not None:
+                    setattr(account, key, val)
+            await session.commit()
+            return True
+
     async def update_token(self, user_id: str, token: str):
         async with self.async_session() as session:
             stmt = select(PowerAccount).where(PowerAccount.user_id == user_id)
@@ -230,6 +258,35 @@ class DBManager:
             sub.enabled = False
             await session.commit()
             return True
+
+    async def upsert_subscription_by_account_id(self, account_id: int,
+                                                  interval_minutes: int = 60,
+                                                  threshold: float = 10.0,
+                                                  critical_threshold: float = 5.0,
+                                                  enabled: bool = True) -> PowerSubscription:
+        async with self.async_session() as session:
+            stmt = select(PowerSubscription).where(
+                PowerSubscription.account_id == account_id)
+            result = await session.execute(stmt)
+            sub = result.scalar_one_or_none()
+            if sub:
+                sub.interval_minutes = interval_minutes
+                sub.threshold = threshold
+                sub.critical_threshold = critical_threshold
+                sub.enabled = enabled
+            else:
+                sub = PowerSubscription(
+                    session_id=f"webui:{account_id}",
+                    account_id=account_id,
+                    interval_minutes=interval_minutes,
+                    threshold=threshold,
+                    critical_threshold=critical_threshold,
+                    enabled=enabled,
+                )
+                session.add(sub)
+            await session.commit()
+            await session.refresh(sub)
+            return sub
 
     async def update_subscription_check(self, subscription_id: int, balance: float):
         async with self.async_session() as session:

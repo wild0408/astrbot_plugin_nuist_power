@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
 from astrbot.api import logger
+from astrbot.api.event import MessageChain
 from astrbot.api.web import json_response, error_response, request
 from sqlalchemy import select
 
@@ -474,15 +475,8 @@ class NUISTPowerPlugin(Star):
 
     async def _send_to_session(self, session_id: str, message: str):
         try:
-            # AstrBot v4.27+ uses context directly
-            await self.context.send_message(session_id, message)
-        except AttributeError:
-            try:
-                handler = self.context.get_send_handler(session_id)
-                if handler:
-                    await handler.send("astrbot_plugin_nuist_power", [handler.build_message(message)])
-            except Exception:
-                self.logger.warning(f"发送告警到 {session_id} 失败 (API 不兼容)")
+            chain = MessageChain().message(message)
+            await self.context.send_message(session_id, chain)
         except Exception as e:
             self.logger.warning(f"发送告警到 {session_id} 失败: {e}")
 

@@ -29,6 +29,7 @@ body {
 
 .form-group { margin-bottom: 14px; }
 .form-group label { display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 4px; }
+.form-group label .hint { font-size: 0.75rem; font-weight: 400; }
 .form-group input, .form-group select {
   width: 100%; padding: 8px 12px; border: 1px solid var(--border);
   border-radius: 6px; font-size: 0.9rem; background: var(--bg); color: var(--text);

@@ -652,14 +652,19 @@ class NUISTPowerPlugin(Star):
         campus = payload.get("campus", "").strip()
         building = payload.get("building", "").strip()
         room = payload.get("room", "").strip()
+        target = payload.get("target_user", "").strip()
         if not all([sid, pwd, campus, building, room]):
             return error_response("所有字段都是必填的")
+        # Form user_id: QQ number -> {qq}@aiocqhttp, otherwise webui user
+        if target:
+            uid = f"{target}@aiocqhttp"
+        else:
+            uid = f"{request.username}@webui"
         try:
             token = await self.api.login(sid, pwd)
             xq, ld, rm, err = await self.api.resolve_room(token, campus, building, room)
             if err:
                 return error_response(err)
-            uid = f"{request.username}@webui"
             await self.db.upsert_account(uid, sid, pwd, rm, xq, ld)
             await self.db.update_token(uid, token)
             bld_name = ld.split("&")[-1] if "&" in ld else ld

@@ -4,7 +4,6 @@ let tempToken = null;
 
 await bridge.ready();
 
-// Apply theme
 function applyTheme() {
   const c = bridge.getContext();
   document.documentElement.setAttribute("data-theme", c?.isDark ? "dark" : "light");
@@ -12,12 +11,11 @@ function applyTheme() {
 applyTheme();
 bridge.onContext(applyTheme);
 
-// Elements
 const $ = (id) => document.getElementById(id);
 const el = {
   error: $("error"), success: $("success"),
   stepLogin: $("step-login"), stepSelect: $("step-select"),
-  studentId: $("student-id"), password: $("password"),
+  studentId: $("student-id"), password: $("password"), targetUser: $("target-user"),
   btnLogin: $("btn-login"), loginSpinner: $("login-spinner"),
   selCampus: $("sel-campus"), selBuilding: $("sel-building"), selRoom: $("sel-room"),
   btnBind: $("btn-bind"), btnReset: $("btn-reset"), bindSpinner: $("bind-spinner"),
@@ -27,7 +25,6 @@ function showError(msg) { el.error.textContent = "❌ " + msg; el.error.classLis
 function showSuccess(msg) { el.success.textContent = "✅ " + msg; el.success.classList.remove("hidden"); el.error.classList.add("hidden"); }
 function hideMessages() { el.error.classList.add("hidden"); el.success.classList.add("hidden"); }
 
-// ---- Step 1: Login ----
 el.btnLogin.addEventListener("click", async () => {
   const sid = el.studentId.value.trim();
   const pwd = el.password.value;
@@ -52,7 +49,6 @@ el.btnLogin.addEventListener("click", async () => {
   }
 });
 
-// ---- Cascading ----
 el.selCampus.addEventListener("change", async () => {
   const campus = el.selCampus.value;
   el.selBuilding.innerHTML = '<option value="">加载中...</option>';
@@ -85,10 +81,10 @@ el.selBuilding.addEventListener("change", async () => {
   } catch (e) { showError("加载房间失败: " + (e.message || JSON.stringify(e))); }
 });
 
-// ---- Step 3: Bind ----
 el.btnBind.addEventListener("click", async () => {
   const sid = el.studentId.value.trim();
   const pwd = el.password.value;
+  const target = el.targetUser.value.trim();
   const campus = el.selCampus.value;
   const building = el.selBuilding.value;
   const room = el.selRoom.value;
@@ -100,10 +96,10 @@ el.btnBind.addEventListener("click", async () => {
     const resp = await bridge.apiPost("bind/execute", {
       student_id: sid, password: pwd,
       campus, building, room,
+      target_user: target,
     });
     if (resp.error) { showError(resp.error); return; }
     showSuccess("绑定成功！" + resp.message);
-    el.btnBind.disabled = true;
   } catch (e) {
     showError("绑定失败: " + (e.message || JSON.stringify(e)));
   } finally {
@@ -111,7 +107,6 @@ el.btnBind.addEventListener("click", async () => {
   }
 });
 
-// ---- Reset ----
 el.btnReset.addEventListener("click", () => {
   tempToken = null;
   el.stepLogin.classList.remove("hidden");
@@ -123,7 +118,6 @@ el.btnReset.addEventListener("click", () => {
   hideMessages();
 });
 
-// ---- Helpers ----
 function populateSelect(sel, items, valueKey, textKey) {
   sel.innerHTML = '<option value="">-- 请选择 --</option>';
   items.forEach(item => {

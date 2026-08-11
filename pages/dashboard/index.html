@@ -44,14 +44,7 @@
 </div>
 </main>
 </div>
-<script>
-var sdk=document.createElement("script");
-sdk.src="/api/plugin/page/bridge-sdk.js";
-sdk.onload=init;
-sdk.onerror=function(){document.getElementById("loading").textContent="SDK 加载失败";};
-document.head.appendChild(sdk);
-
-async function init(){
+<script type="module">
 var B=window.AstrBotPluginPage,$=function(id){return document.getElementById(id);};
 var chart=null,group="raw",accounts=[],timer=null;
 await B.ready();
@@ -125,7 +118,6 @@ chart=new Chart(cv,{type:"line",data:{labels:labels,datasets:[{label:"电量(度
 }
 ld();timer=setInterval(ld,30000);
 window.addEventListener("beforeunload",function(){if(timer)clearInterval(timer);if(chart)chart.destroy();});
-}
 </script>
 </body>
 </html>

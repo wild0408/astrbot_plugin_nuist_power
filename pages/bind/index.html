@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>绑定账号 — NUIST 电费</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="header">
+        <h1>🔗 绑定电费账号</h1>
+      </header>
+
+      <div id="error" class="error hidden"></div>
+      <div id="success" class="success hidden"></div>
+
+      <!-- Step 1: Login -->
+      <section id="step-login" class="card">
+        <h2>① 输入学号和密码</h2>
+        <div class="form-group">
+          <label for="student-id">学号</label>
+          <input id="student-id" type="text" placeholder="202583470122" autocomplete="off" />
+        </div>
+        <div class="form-group">
+          <label for="password">密码</label>
+          <input id="password" type="password" placeholder="密码" autocomplete="off" />
+        </div>
+        <button id="btn-login" class="btn btn-primary">获取校区列表</button>
+        <span id="login-spinner" class="spinner hidden"></span>
+      </section>
+
+      <!-- Step 2: Select -->
+      <section id="step-select" class="card hidden">
+        <h2>② 选择房间</h2>
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="sel-campus">校区</label>
+            <select id="sel-campus" disabled>
+              <option value="">-- 请选择 --</option>
+            </select>
+          </div>
+          <div class="form-group flex-1">
+            <label for="sel-building">楼栋</label>
+            <select id="sel-building" disabled>
+              <option value="">-- 请先选校区 --</option>
+            </select>
+          </div>
+          <div class="form-group flex-1">
+            <label for="sel-room">房间号</label>
+            <select id="sel-room" disabled>
+              <option value="">-- 请先选楼栋 --</option>
+            </select>
+          </div>
+        </div>
+        <button id="btn-bind" class="btn btn-primary" disabled>绑定账号</button>
+        <button id="btn-reset" class="btn btn-secondary">重新输入</button>
+        <span id="bind-spinner" class="spinner hidden"></span>
+      </section>
+    </div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

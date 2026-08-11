@@ -10,35 +10,37 @@
 <body>
 <div id="app">
 <nav id="sidebar">
-<div class="sidebar-brand">NUIST 电费</div>
+<div class="sidebar-brand">⚡ NUIST 电费</div>
 <ul class="sidebar-nav">
-<li class="nav-item active" data-tab="dashboard">仪表盘</li>
-<li class="nav-item" data-tab="users">用户管理</li>
+<li class="nav-item active" data-tab="dashboard"><span class="nav-icon">📊</span>仪表盘</li>
+<li class="nav-item" data-tab="users"><span class="nav-icon">👥</span>用户管理</li>
 </ul>
 </nav>
 <main id="main">
 <div id="loading">加载中...</div>
 <div id="error" class="hidden"></div>
 <div id="tab-dashboard" class="tab-content">
-<div id="empty" class="hidden">暂无绑定账号</div>
+<div id="empty" class="hidden"><div class="empty-icon">📭</div><p>暂无绑定账号</p><p class="empty-hint">在聊天中使用 /power bind 绑定，或在 WebUI 配置中添加托管账号</p></div>
 <div id="content" class="hidden">
 <div id="summary-cards"></div>
 <section class="card">
-<h2>余额历史</h2>
+<div class="chart-header">
+<h2>📈 余额历史</h2>
 <div class="group-toggle">
 <button class="group-btn active" data-group="raw">原始</button>
 <button class="group-btn" data-group="day">按天</button>
 <button class="group-btn" data-group="month">按月</button>
 </div>
+</div>
 <select id="account-selector"></select>
 <div class="chart-wrap"><canvas id="chart"></canvas></div>
-<div id="chart-empty" class="hidden">暂无历史数据</div>
+<div id="chart-empty" class="hidden"><div class="empty-icon">📉</div><p>暂无历史数据</p></div>
 </section>
 </div>
 </div>
 <div id="tab-users" class="tab-content hidden">
 <section class="card">
-<h2>全部账号</h2>
+<h2>👥 全部账号</h2>
 <div class="table-wrap"><table><thead><tr><th>学号</th><th>用户</th><th>校区</th><th>楼栋</th><th>房号</th><th>Token</th><th>订阅</th><th>余额</th></tr></thead><tbody id="user-tbody"></tbody></table></div>
 </section>
 </div>

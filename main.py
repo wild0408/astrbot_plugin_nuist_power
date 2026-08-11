@@ -35,10 +35,8 @@ from .models import DBManager, PowerAccount
 
 FALLBACK_CAMPUSES = ["沁园", "晖园", "硕园", "文园", "人才公寓三期", "商铺"]
 
-
 def _uid(event: AstrMessageEvent) -> str:
     return f"{event.get_sender_id()}@{event.get_platform_name()}"
-
 
 class NUISTPowerPlugin(Star):
 
@@ -57,10 +55,6 @@ class NUISTPowerPlugin(Star):
         context.register_web_api(f"/{PLUGIN_NAME}/dashboard/overview", self._web_overview, ["GET"], "仪表盘概览")
         context.register_web_api(f"/{PLUGIN_NAME}/dashboard/history", self._web_history, ["GET"], "余额历史")
         context.register_web_api(f"/{PLUGIN_NAME}/dashboard/stream", self._web_dashboard_stream, ["GET"], "仪表盘SSE")
-        context.register_web_api(f"/{PLUGIN_NAME}/bind/init", self._web_bind_init, ["GET"], "绑定-初始化登录")
-        context.register_web_api(f"/{PLUGIN_NAME}/bind/buildings", self._web_bind_buildings, ["GET"], "绑定-楼栋列表")
-        context.register_web_api(f"/{PLUGIN_NAME}/bind/rooms", self._web_bind_rooms, ["GET"], "绑定-房间列表")
-        context.register_web_api(f"/{PLUGIN_NAME}/bind/execute", self._web_bind_execute, ["POST"], "绑定-执行")
         context.register_web_api(f"/{PLUGIN_NAME}/dashboard/history_grouped", self._web_history_grouped, ["GET"], "聚合历史")
         context.register_web_api(f"/{PLUGIN_NAME}/dashboard/all", self._web_all, ["GET"], "全部账号")
 
@@ -589,89 +583,6 @@ class NUISTPowerPlugin(Star):
                     yield f"event: error\ndata: {_json.dumps({'error': str(e)})}\n\n"
                 await _asyncio.sleep(30)
         return stream_response(stream())
-
-    # ---- Bind Page Handlers ----
-
-    async def _web_bind_init(self):
-        """Login with student_id + password, return token and campus list."""
-        sid = request.query.get("student_id", "").strip()
-        pwd = request.query.get("password", "")
-        if not sid or not pwd:
-            return error_response("学号和密码不能为空")
-        try:
-            token = await self.api.login(sid, pwd)
-            campuses = await self.api.get_campuses(token)
-            return json_response({"token": token, "campuses": campuses})
-        except Exception as e:
-            return error_response(f"登录失败: {e}")
-
-    async def _web_bind_buildings(self):
-        """Get buildings for a campus using a temp token."""
-        token = request.query.get("token", "")
-        campus = request.query.get("campus", "")
-        if not token:
-            return error_response("缺少 token")
-        try:
-            campuses = await self.api.get_campuses(token)
-            xq_id = next((c["value"] for c in campuses if c.get("name") == campus), None)
-            if not xq_id:
-                names = [c.get("name", "?") for c in campuses]
-                return error_response(f"未找到校区「{campus}」，可选: {', '.join(names)}")
-            buildings = await self.api.get_buildings(token, xq_id)
-            return json_response({"buildings": buildings})
-        except Exception as e:
-            return error_response(f"获取楼栋失败: {e}")
-
-    async def _web_bind_rooms(self):
-        """Get rooms for a campus+building using a temp token."""
-        token = request.query.get("token", "")
-        campus = request.query.get("campus", "")
-        building = request.query.get("building", "")
-        if not token:
-            return error_response("缺少 token")
-        try:
-            campuses = await self.api.get_campuses(token)
-            xq_id = next((c["value"] for c in campuses if c.get("name") == campus), None)
-            if not xq_id:
-                return error_response(f"未找到校区「{campus}」")
-            buildings = await self.api.get_buildings(token, xq_id)
-            ld_id = next((b["value"] for b in buildings if b.get("name") == building), None)
-            if not ld_id:
-                names = [b.get("name", "?") for b in buildings[:12]]
-                return error_response(f"未找到楼栋「{building}」，可选: {', '.join(names)}")
-            rooms = await self.api.get_rooms(token, xq_id, ld_id)
-            return json_response({"rooms": rooms})
-        except Exception as e:
-            return error_response(f"获取房间失败: {e}")
-
-    async def _web_bind_execute(self):
-        """Execute binding: login, resolve room, upsert account."""
-        payload = await request.json(default={})
-        sid = payload.get("student_id", "").strip()
-        pwd = payload.get("password", "")
-        campus = payload.get("campus", "").strip()
-        building = payload.get("building", "").strip()
-        room = payload.get("room", "").strip()
-        target = payload.get("target_user", "").strip()
-        if not all([sid, pwd, campus, building, room]):
-            return error_response("所有字段都是必填的")
-        # Form user_id: QQ number -> {qq}@aiocqhttp, otherwise webui user
-        if target:
-            uid = f"{target}@aiocqhttp"
-        else:
-            uid = f"{request.username}@webui"
-        try:
-            token = await self.api.login(sid, pwd)
-            xq, ld, rm, err = await self.api.resolve_room(token, campus, building, room)
-            if err:
-                return error_response(err)
-            await self.db.upsert_account(uid, sid, pwd, rm, xq, ld)
-            await self.db.update_token(uid, token)
-            bld_name = ld.split("&")[-1] if "&" in ld else ld
-            rm_name = rm.split("&")[-1] if "&" in rm else rm
-            return json_response({"message": f"{bld_name} {rm_name}号房 绑定成功!", "success": True})
-        except Exception as e:
-            return error_response(f"绑定失败: {e}")
 
     async def _web_history_grouped(self):
         """Return balance history aggregated by day or month."""

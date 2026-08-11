@@ -89,6 +89,48 @@ WebUI 中启用插件。
 
 托管账号支持填写：学号、密码、校区名、楼栋名、房间号、用户标识。保存后自动登录并解析房间 ID 写入数据库。
 
+## WebUI 仪表盘
+
+插件内置可视化仪表盘页面，在 AstrBot WebUI 中进入插件详情页即可打开：
+
+- **摘要卡片** — 绑定数、订阅数、告警数、Token 状态一目了然
+- **余额趋势图** — Chart.js 折线图，支持原始 / 按天 / 按月三种视图
+- **账号列表** — 全部绑定账号的 Token 状态、订阅配置、最近余额
+- **亮暗主题** — 自动跟随 AstrBot WebUI 主题切换
+
+## 开发
+
+`ash
+# 克隆并安装依赖
+cd AstrBot/data/plugins
+git clone https://github.com/wild0408/astrbot_plugin_nuist_power
+cd astrbot_plugin_nuist_power
+pip install httpx
+
+# 修改代码后重载插件 (WebUI → 插件管理 → 重载)
+# 仅修改 pages/ 静态资源时刷新 WebUI 页面即可，无需重载
+`
+
+### 项目结构
+
+`
+astrbot_plugin_nuist_power/
+├── main.py              # 插件主入口 (命令 + Web API + 后台轮询)
+├── api.py               # NUIST API 异步封装
+├── models.py            # 数据库模型 (SQLModel + aiosqlite)
+├── _conf_schema.json    # WebUI 可视化配置 Schema
+├── metadata.yaml        # 插件元数据
+├── requirements.txt     # httpx
+├── pages/
+│   └── dashboard/
+│       ├── index.html   # 仪表盘骨架
+│       ├── app.js       # Bridge 通信 + Chart.js 渲染
+│       └── style.css    # 亮暗主题样式
+└── data/
+    └── power.db         # SQLite 数据库 (自动创建)
+`
+
+## 依赖
 ## 依赖
 
 - `httpx` — 异步 HTTP

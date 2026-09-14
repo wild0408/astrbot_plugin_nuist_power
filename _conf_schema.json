@@ -19,6 +19,11 @@
     "type": "string",
     "default": ""
   },
+  "allow_insecure_tls_fallback": {
+    "description": "学校服务器证书链校验失败时，仅对 icard.nuist.edu.cn 自动关闭 TLS 校验并重试。关闭后会严格校验证书，但当前服务器可能无法连接。",
+    "type": "bool",
+    "default": true
+  },
   "admin_alert_session": {
     "description": "管理员告警接收会话 ID (可选)",
     "type": "string"

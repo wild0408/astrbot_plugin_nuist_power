@@ -1,4 +1,4 @@
-// NUIST Power Dashboard v1.2.6
+// NUIST Power Dashboard v1.2.9
 var B = window.AstrBotPluginPage;
 var chart = null, group = "raw", timer = null;
 

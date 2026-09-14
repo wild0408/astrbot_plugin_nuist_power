@@ -5,9 +5,11 @@ campus/building/room resolution.
 """
 import base64
 import json
+import ssl
 import time
+from collections.abc import Callable
 from datetime import timezone as _tz
-from typing import Optional, Tuple, List
+from typing import List, Optional, Tuple
 
 import httpx
 
@@ -25,14 +27,86 @@ class NUISTPowerAPI:
     FEEITEMID = "448"
     TIMEOUT = 15
 
-    def __init__(self, proxy: str = None):
+    def __init__(
+        self,
+        proxy: str = None,
+        allow_insecure_tls_fallback: bool = True,
+        on_tls_fallback: Optional[Callable[[str], None]] = None,
+    ):
         self.proxy = proxy
+        self.allow_insecure_tls_fallback = allow_insecure_tls_fallback
+        self.on_tls_fallback = on_tls_fallback
+        self._tls_fallback_warned = False
 
-    def _client(self):
-        kwargs = {"timeout": self.TIMEOUT}
+    def _client(self, verify: bool = True):
+        kwargs = {
+            "timeout": self.TIMEOUT,
+            "verify": verify,
+        }
         if self.proxy:
             kwargs["proxy"] = self.proxy
         return httpx.AsyncClient(**kwargs)
+
+    @staticmethod
+    def _is_certificate_error(exc: BaseException) -> bool:
+        current = exc
+        seen = set()
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            if isinstance(current, ssl.SSLCertVerificationError):
+                return True
+            if "CERTIFICATE_VERIFY_FAILED" in str(current).upper():
+                return True
+            current = current.__cause__ or current.__context__
+        return False
+
+    async def _post(self, url: str, *, headers: dict, data: dict) -> httpx.Response:
+        """POST with a narrowly-scoped fallback for the campus server's broken chain."""
+        try:
+            async with self._client(verify=True) as client:
+                return await client.post(url, headers=headers, data=data)
+        except httpx.ConnectError as exc:
+            if not (
+                self.allow_insecure_tls_fallback
+                and self._is_certificate_error(exc)
+            ):
+                raise
+            if not self._tls_fallback_warned:
+                if self.on_tls_fallback:
+                    self.on_tls_fallback(
+                        "icard.nuist.edu.cn 证书链校验失败，本次请求将对固定学校域名关闭 TLS 校验重试。"
+                    )
+                self._tls_fallback_warned = True
+            async with self._client(verify=False) as client:
+                return await client.post(url, headers=headers, data=data)
+
+    @staticmethod
+    def _json_response(resp: httpx.Response, operation: str) -> dict:
+        try:
+            try:
+                text = resp.content.decode("utf-8")
+            except UnicodeDecodeError:
+                # Some error responses are GBK despite declaring UTF-8.
+                text = resp.content.decode("gb18030")
+            result = json.loads(text)
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise RuntimeError(
+                f"{operation} failed: HTTP {resp.status_code}, invalid JSON response"
+            ) from exc
+        if not isinstance(result, dict):
+            raise RuntimeError(f"{operation} failed: unexpected response format")
+        if not 200 <= resp.status_code < 300:
+            detail = (
+                result.get("error_description")
+                or result.get("message")
+                or result.get("msg")
+                or result.get("error")
+                or result
+            )
+            raise RuntimeError(
+                f"{operation} failed: HTTP {resp.status_code}: {detail}"
+            )
+        return result
 
     # ---- Auth ----
 
@@ -43,6 +117,8 @@ class NUISTPowerAPI:
             "synaccesssource": "pc",
             "origin": self.BASE_URL,
             "referer": f"{self.BASE_URL}/",
+            "accept": "application/json, text/plain, */*",
+            "user-agent": "Mozilla/5.0 (AstrBot NUIST Power Plugin)",
         }
         data = {
             "username": student_id,
@@ -52,15 +128,19 @@ class NUISTPowerAPI:
             "loginFrom": "pc",
             "logintype": "snoNew",
         }
-        async with self._client() as client:
-            resp = await client.post(self.AUTH_URL, headers=headers, data=data)
-            result = resp.json()
-            token = result.get("access_token")
-            if not token:
-                raise RuntimeError(
-                    f"login failed: {result.get('error_description', result)}"
-                )
-            return token
+        resp = await self._post(self.AUTH_URL, headers=headers, data=data)
+        result = self._json_response(resp, "login")
+        token = result.get("access_token")
+        if not token:
+            detail = (
+                result.get("error_description")
+                or result.get("message")
+                or result.get("msg")
+                or result.get("error")
+                or result
+            )
+            raise RuntimeError(f"login failed: {detail}")
+        return token
 
     # ---- Balance Query ----
 
@@ -70,20 +150,19 @@ class NUISTPowerAPI:
             "synaccesssource": "pc",
             "origin": self.BASE_URL,
             "referer": f"{self.BASE_URL}/",
+            "accept": "application/json, text/plain, */*",
+            "user-agent": "Mozilla/5.0 (AstrBot NUIST Power Plugin)",
         }
 
     async def query(self, token: str, room_params: dict) -> dict:
         headers = self._auth_headers(token)
-        async with self._client() as client:
-            resp = await client.post(
-                self.QUERY_URL, headers=headers, data=room_params
+        resp = await self._post(self.QUERY_URL, headers=headers, data=room_params)
+        result = self._json_response(resp, "power query")
+        if str(result.get("code")) != "200":
+            raise RuntimeError(
+                result.get("message") or result.get("msg") or "unknown error"
             )
-            if resp.status_code != 200:
-                raise RuntimeError(f"HTTP {resp.status_code}")
-            result = resp.json()
-            if result.get("code") != 200:
-                raise RuntimeError(result.get("msg", "unknown error"))
-            return result
+        return result
 
     async def query_with_refresh(
         self, token: str, student_id: str, password: str, room_params: dict
@@ -103,14 +182,16 @@ class NUISTPowerAPI:
 
     async def _select_query(self, token: str, params: dict) -> List[dict]:
         headers = self._auth_headers(token)
-        async with self._client() as client:
-            resp = await client.post(
-                self.QUERY_URL, headers=headers, data=params
+        resp = await self._post(self.QUERY_URL, headers=headers, data=params)
+        result = self._json_response(resp, "selector query")
+        if str(result.get("code")) != "200":
+            raise RuntimeError(
+                result.get("message") or result.get("msg") or "select query failed"
             )
-            result = resp.json()
-            if result.get("code") != 200:
-                raise RuntimeError(result.get("msg", "select query failed"))
-            return result.get("map", {}).get("data", [])
+        data = result.get("map", {}).get("data", [])
+        if not isinstance(data, list):
+            raise RuntimeError("selector query failed: unexpected data format")
+        return data
 
     async def get_campuses(self, token: str) -> List[dict]:
         return await self._select_query(token, {

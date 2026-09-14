@@ -21,20 +21,37 @@ NUIST 电费查询插件 — AstrBot v4+
 import asyncio
 import os
 import time
-import httpx
-from datetime import datetime, timezone
 
-from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.star import Context, Star
+import httpx
 from astrbot.api import logger
-from astrbot.api.event import MessageChain
-from astrbot.api.web import json_response, error_response, request, stream_response
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+from astrbot.api.star import Context, Star
+from quart import Response, g, jsonify, request
 from sqlalchemy import select
 
 from .api import NUISTPowerAPI
 from .models import DBManager, PowerAccount
 
 FALLBACK_CAMPUSES = ["沁园", "晖园", "硕园", "文园", "人才公寓三期", "商铺"]
+
+
+def json_response(payload: dict, status: int = 200):
+    response = jsonify(payload)
+    response.status_code = status
+    return response
+
+
+def error_response(message: str, status: int = 400):
+    return json_response({"success": False, "message": str(message)}, status)
+
+
+def stream_response(iterator):
+    return Response(
+        iterator,
+        content_type="text/event-stream; charset=utf-8",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
 
 def _uid(event: AstrMessageEvent) -> str:
     return f"{event.get_sender_id()}@{event.get_platform_name()}"
@@ -45,7 +62,13 @@ class NUISTPowerPlugin(Star):
         super().__init__(context)
         self.config = config
         self._alerted = set()
-        self.api = NUISTPowerAPI(proxy=self.config.get("proxy", "").strip() or None)
+        self.api = NUISTPowerAPI(
+            proxy=self.config.get("proxy", "").strip() or None,
+            allow_insecure_tls_fallback=self.config.get(
+                "allow_insecure_tls_fallback", True
+            ),
+            on_tls_fallback=logger.warning,
+        )
         plugin_dir = os.path.dirname(os.path.abspath(__file__))
         data_dir = os.path.join(plugin_dir, "data")
         os.makedirs(data_dir, exist_ok=True)
@@ -352,7 +375,7 @@ class NUISTPowerPlugin(Star):
             if acc:
                 acc.xiaoqu_id = xq; acc.loudong_id = ld; acc.room_id = rm
                 await session.commit()
-        return f"✅ 房间已更新 (原始ID)"
+        return "✅ 房间已更新 (原始ID)"
 
     # ---- Campuses ----
 
@@ -422,7 +445,7 @@ class NUISTPowerPlugin(Star):
                     lines.append(f"    📬 订阅: 每{s.interval_minutes}分钟, "
                                  f"告警<{s.threshold}度, 严重<{s.critical_threshold}度")
             else:
-                lines.append(f"    📬 未订阅")
+                lines.append("    📬 未订阅")
         total_subs = sum(len(v) for v in sub_map.values())
         lines.append(f"\n共 {len(accounts)} 个账号, {total_subs} 个活跃订阅")
         return "\n".join(lines)
@@ -563,14 +586,17 @@ class NUISTPowerPlugin(Star):
                     "subscriptions": sub_map.get(acc.id, []),
                     "history": history,
                 })
-            return json_response({"accounts": items, "username": request.username})
+            return json_response({
+                "accounts": items,
+                "username": getattr(g, "username", ""),
+            })
         except Exception as e:
             return error_response(str(e))
 
     async def _web_history(self):
         """Return balance history for a specific account."""
-        account_id = request.query.get("account_id", type=int)
-        limit = request.query.get("limit", 30, type=int)
+        account_id = request.args.get("account_id", type=int)
+        limit = request.args.get("limit", 30, type=int)
         if not account_id:
             return error_response("account_id is required")
         try:
@@ -594,7 +620,6 @@ class NUISTPowerPlugin(Star):
                 "enabled": s.enabled, "last_check_at": str(s.last_check_at) if s.last_check_at else None,
                 "last_balance": s.last_balance,
             })
-        import json as _json
         items = []
         for acc in accounts:
             records = await self.db.get_records(acc.id, limit=30)
@@ -629,8 +654,8 @@ class NUISTPowerPlugin(Star):
 
     async def _web_history_grouped(self):
         """Return balance history aggregated by day or month."""
-        account_id = request.query.get("account_id", type=int)
-        group = request.query.get("group", "raw")
+        account_id = request.args.get("account_id", type=int)
+        group = request.args.get("group", "raw")
         if not account_id:
             return error_response("account_id is required")
         if group not in ("raw", "day", "month"):
@@ -686,14 +711,18 @@ class NUISTPowerPlugin(Star):
                     "token_valid": acc.token_is_valid(),
                     "subscriptions": sub_map.get(acc.id, []),
                 })
-            return json_response({"accounts": items, "total": len(items), "username": request.username})
+            return json_response({
+                "accounts": items,
+                "total": len(items),
+                "username": getattr(g, "username", ""),
+            })
         except Exception as e:
             return error_response(str(e))
 
     async def _web_unbind(self):
         """Unbind an account by account_id."""
         try:
-            body = await request.json()
+            body = await request.get_json(silent=True) or {}
             account_id = int(body.get("account_id", 0))
             if not account_id:
                 return error_response("缺少 account_id")
@@ -707,7 +736,7 @@ class NUISTPowerPlugin(Star):
     async def _web_edit(self):
         """Edit account + subscription settings."""
         try:
-            body = await request.json()
+            body = await request.get_json(silent=True) or {}
             account_id = int(body.get("account_id", 0))
             if not account_id:
                 return error_response("缺少 account_id")
